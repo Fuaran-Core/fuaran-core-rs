@@ -1,18 +1,16 @@
-//! Kani harnesses over the spine's reader (`fuaran_core::json::read`).
+//! Kani harnesses over the spine (`fuaran_core`).
 //!
-//! Each harness reads EVERY valid UTF-8 text of at most `N` bytes (the bytes and
-//! the length are symbolic) under a symbolic limits record, and proves:
+//! What closes, and runs under `run.ps1 -Verify`: `escape_len0` / `escape_len1` — the
+//! canonical escape (`json::escape_string`) on the empty string and on every one-byte
+//! ASCII string returns, is quoted, and is exactly as long as rule 6 says.
 //!
-//! * `read_is_panic_free` — the reader returns on every such input: no panic, no
-//!   arithmetic overflow, no out-of-bounds index, no undefined behaviour.
-//! * `read_respects_its_limits` — an accepted value holds no container, string or
-//!   nesting past the bound it was read under; a breach names the bound's own
-//!   declared value; an oversized document is refused before anything is read.
-//! * `read_allocation_is_bounded` — the peak live heap of the read stays under a
-//!   stated ceiling, measured by a counting global allocator, and a document past
-//!   its `documentBytes` bound allocates nothing at all.
+//! What does not close on a 16 GB machine, kept behind the `frontier` feature with its
+//! measurements: the escape on two and three symbolic bytes, and the rungs over the
+//! limited reader — every valid UTF-8 text of at most N bytes under a symbolic limits
+//! record: the reader returns, an accepted value is within every bound, a breach names
+//! the bound it passed, and the peak live heap stays under a stated ceiling.
 //!
-//! See `../README.md` for the sizes proved, the cost and the verdict.
+//! See `../README.md` for the measurements, the cost and the verdict.
 
 #[cfg(kani)]
 mod harnesses;
