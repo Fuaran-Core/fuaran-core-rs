@@ -1,0 +1,7 @@
+{
+  "kind": "core-pin",
+  "repository": "Fuaran-Core/fuaran-core",
+  "sha": "46b5aa8aa0a7a8099ec27a5108cd0304ebe14580",
+  "version": "0.41.0",
+  "reason": "Phase 463: the spine's first certification, against the conformance vectors of Core 0.41.0 (draft) at this commit. CI checks Core out at this commit; moving it is a deliberate act in the change that needs it, with the legs re-run against the new commit."
+}

@@ -1,0 +1,64 @@
+# Build, test and conformance gate for the Rust Core spine.
+#
+# Layout: this repository and the Core checkout its conformance legs read sit side by side,
+#
+#     $GITHUB_WORKSPACE/
+#     ├── fuaran-core-rs/   <- this repository
+#     └── fuaran-core/      <- Fuaran-Core/fuaran-core, AT the commit core-pin.json names
+#
+# so tests/conformance.rs resolves `../fuaran-core` with no override. The checkout is pinned: the
+# spine certifies against the vectors of one Core commit, and moving to another is a deliberate
+# change here (core-pin.json), never something a push to Core does to this build.
+#
+# The whole gate is run.ps1, so CI and the one-command entry point cannot diverge.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fuaran-core-rs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fuaran-core-rs
+
+      - name: Read the Core pin
+        id: pin
+        run: |
+          echo "repository=$(jq -r .repository core-pin.json)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -r .sha core-pin.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out Core at the pin
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pin.outputs.repository }}
+          ref: ${{ steps.pin.outputs.sha }}
+          path: fuaran-core
+
+      - name: Assert Core is where the tests resolve it
+        run: test -f ../fuaran-core/conformance/apply/manifest.json
+
+      # rustup is preinstalled on the runner, so the toolchain is installed directly rather than
+      # through a third-party action referenced by a moving branch name.
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+          rustup target add thumbv7em-none-eabihf
+          rustc --version && cargo --version
+
+      - name: Gate (run.ps1)
+        shell: pwsh
+        run: ./run.ps1

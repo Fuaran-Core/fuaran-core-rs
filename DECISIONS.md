@@ -1,0 +1,77 @@
+# Decisions
+
+Each entry records a decision about this crate, why it was taken, and what it rules out.
+
+## D1 — 2026-10-23 — the repository, its organisation and its licence
+
+`fuaran-core-rs` lives at `Fuaran-Core/fuaran-core-rs`, beside the reference implementation it twins
+(`Fuaran-Core/fuaran-core`), and is Apache-2.0 and public from its first commit, for the reason the
+reference is: a spine every host builds on is only useful if every host can hold it. (Operator ruling,
+recorded by Phase 463.)
+
+## D2 — 2026-10-23 — the crate's identity, and how a host depends on it
+
+- The package is `fuaran-core` and its library `fuaran_core`. `fuaran-core` is the intended crates.io
+  name (unclaimed on 2026-10-23); `publish = false` holds until a release is a deliberate act, so
+  nothing is published by this decision.
+- A host depends on it as `fuaran-core = { version = "<crate version>", path = "../fuaran-core-rs",
+  default-features = false }`: the path is the working layout (the two repositories checked out side by
+  side, in CI as locally), and the version requirement both keeps a later crates.io publish open and
+  makes a version move here fail a consumer's build loudly instead of silently changing what it links.
+- `no_std` + `alloc` is the default build; `std` is a feature that adds nothing today and exists so a
+  hosted consumer can ask for it without a breaking change later. No dependency is taken.
+
+## D3 — 2026-10-23 — what the spine holds, and what it does not (a premise checked)
+
+Phase 463 was written as a MOVE of the spine out of the Rust UI host. Checked against that host, the
+premise holds for part of it and not for the rest:
+
+- **Moved, verbatim in behaviour:** canonical JSON (the value model, the reader, the canonical
+  writer), the canonical number form, the exact decimal (with the rounding modes it computes under),
+  and SHA-256. The UI host re-exports each under the paths it already published.
+- **Generalised while moving:** the reader takes a limits record (`JsonLimits`) instead of one wire's
+  constants, classifies malformed text by the reference's `JsonErrorKind`, and reports a breach at
+  its path; the chain is the pre-image and link over OPAQUE op text, and the actor with its one
+  canonical spelling, which the UI host's typed op-record chain now computes its hashes through.
+- **Not moved, because there was nothing generic to move:** the UI host's apply engine works over its
+  own typed node and op vocabulary, its DAG module is the codec of a UI record (it mints and verifies
+  no content id), and its three-way merge is over UI trees. They stay in that host. What the spine
+  holds instead is Core's own contract, written for this crate: the skeleton tree and its six ops
+  (`tree`, `ops`), and the content-addressed DAG with its orders, ranks, replays and integrity walk
+  (`dag`), generic over the op through `DagOp`.
+
+## D4 — 2026-10-23 — where the vectors come from
+
+The conformance legs read the reference's `conformance/` directory from a Core checkout at the commit
+`core-pin.json` names (found at `FUARAN_CORE_DIR`, or as `fuaran-core/` beside this repository or an
+ancestor of it). A missing checkout FAILS the legs: a suite that skipped its vectors would read green
+having certified nothing. The pin moves only as a deliberate act, in the change that needs it, with the
+legs re-run against the new commit.
+
+## D5 — 2026-10-23 — two value models over one reader
+
+`json::JVal` is the model a wire host reads documents into: it carries `null` (a wire answers a null by
+position) and every number as a double (exact to 2^53, past which only a canonical float layout is
+admitted). The decode error contract is the reference's, whose model has no null and distinguishes an
+integer token within `i32` from every other number — `2.0` is not an `int` there. Both are built by ONE
+reader, generic over what it builds, so the grammar, the rows and the limits are stated once; the decode
+layer (`decode::Value`) refuses a null as `NullNotRepresentable`, as the reference's strict reading does.
+
+## D6 — 2026-10-23 — what the first certification covers
+
+Certified against the reference's vectors (`tests/conformance.rs`), every vector of each set named:
+
+| Family | Run | Not run, and why |
+|---|---|---|
+| `refusals/codec-refusals.json` | the 56 `json` vectors | the `column` and `profile` vectors: the columnar codec and the wire-profile reader are not the spine's |
+| `refusals/seam-refusals.json` | — | the capability and query seams are not the spine's |
+| `decode/decode-rejects.json` | all 47 | — |
+| `laws/decimal-laws.json` | the 53 `canonical`, `compare`, `add`, `toFloat` vectors | `codecDecode`, `codecEncode`, `aggregate`: the column codec and the aggregates |
+| `escape/string-escape.json` | all 38 lines | — |
+| `apply/skeleton-apply.json` | all 25 | — |
+| `chain/skeleton-chain.json` | all 16 | — |
+| `dag/skeleton-dag.json` | all 11 | — |
+| `merge/`, `diff/` | — | the reconcile and the diff are not in the spine yet |
+
+A rejection is answered in the reference's own vocabulary (its canonical rejection bytes), not mapped to
+another host's codes, because this crate IS the reference's twin.
