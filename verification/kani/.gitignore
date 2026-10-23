@@ -1,0 +1,2 @@
+# Build output; the harnesses run with their own target directory (see Dockerfile).
+/target/

@@ -1,0 +1,17 @@
+[package]
+name = "fuaran-core-escape"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "The canonical escape, proved under Creusot to agree with the reference proof's model of it."
+license = "Apache-2.0"
+
+# Not a member of the spine's package: the spine's own build, tests and no_std
+# profile never see this crate.
+[workspace]
+
+[dependencies]
+creusot-std = "0.9.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(creusot)"] }

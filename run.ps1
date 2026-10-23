@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 # fuaran-core-rs: the one-command entry point.
 # cargo fmt --check -> cargo clippy -> cargo build -> cargo test -> a no_std build for
-# thumbv7em-none-eabihf (Cortex-M4F).
+# thumbv7em-none-eabihf (Cortex-M4F) -> (opt-in) the machine-checked proofs under verification/.
 #
 # `cargo test` includes the conformance legs (tests/conformance.rs), which read Core's vectors from a
 # Core checkout: FUARAN_CORE_DIR, or `fuaran-core/` beside this repository, at the commit
@@ -10,13 +10,18 @@
 #
 # The no_std build is part of the contract, so a missing target FAILS here, naming the remedy;
 # -SkipEmbedded is the deliberate opt-out.
+#
+# -Verify runs the proofs (verification/README.md): the Kani harnesses and the Creusot replay. Each
+# tool runs natively when it is on PATH, else in Docker from the Dockerfile beside it (built once);
+# with neither, the leg SKIPS and names the reason. A proof that runs and does not check FAILS.
 # Switches: -SkipFormat / -SkipBuild / -SkipTests / -SkipEmbedded for fast iteration.
 [CmdletBinding()]
 param(
     [switch]$SkipFormat,
     [switch]$SkipBuild,
     [switch]$SkipTests,
-    [switch]$SkipEmbedded
+    [switch]$SkipEmbedded,
+    [switch]$Verify
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,6 +50,32 @@ function Invoke-Stage {
     }
 }
 
+# One proof leg. $Tool is the cargo subcommand binary ("cargo-kani"); $Dir the crate under
+# verification/; $Native the cargo invocation when the tool is on PATH, $InContainer the same
+# work as a shell line run in the image built from $Dir's Dockerfile with the repository at /src.
+# A skip is a named reason and exit 0; a tool that ran and did not prove the goals is a failure.
+function Invoke-Proof {
+    param([string]$Name, [string]$Tool, [string]$Dir, [string]$Image, [scriptblock]$Native, [string]$InContainer)
+    if (Get-Command $Tool -CommandType Application -ErrorAction SilentlyContinue) {
+        Push-Location $Dir
+        try { & $Native } finally { Pop-Location }
+        return
+    }
+    $docker = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $docker) {
+        Write-Host "SKIPPED: $Name needs '$Tool' on PATH or Docker; neither was found"
+        $global:LASTEXITCODE = 0
+        return
+    }
+    $dockerfile = Split-Path -Parent (Join-Path $PSScriptRoot $Dir)
+    if (-not (& $docker.Source image inspect $Image 2>$null)) {
+        Write-Host "building $Image from $dockerfile/Dockerfile (once; the toolchain is pinned there)"
+        & $docker.Source build -t $Image $dockerfile
+        if ($LASTEXITCODE -ne 0) { return }
+    }
+    & $docker.Source run --rm -v "${PSScriptRoot}:/src" $Image bash -c $InContainer
+}
+
 $cargo = Resolve-Tool "cargo"
 
 if (-not $SkipFormat) { Invoke-Stage "cargo fmt --check" { & $cargo fmt --all -- --check } }
@@ -65,6 +96,21 @@ if (-not $SkipEmbedded) {
     else {
         Write-Host "FAILED: the no_std build needs the $target target (rustup target add $target), or pass -SkipEmbedded"
         exit 1
+    }
+}
+
+if ($Verify) {
+    Invoke-Stage "verify: Kani harnesses (verification/kani)" {
+        Invoke-Proof -Name "the Kani harnesses" -Tool "cargo-kani" -Dir "verification/kani" `
+            -Image "fuaran-core-verify-kani" `
+            -Native { & $cargo kani } `
+            -InContainer "cd /src/verification/kani && cargo kani"
+    }
+    Invoke-Stage "verify: Creusot replay (verification/creusot/escape)" {
+        Invoke-Proof -Name "the Creusot proof" -Tool "cargo-creusot" -Dir "verification/creusot/escape" `
+            -Image "fuaran-core-verify-creusot" `
+            -Native { & $cargo creusot; if ($LASTEXITCODE -eq 0) { & $cargo creusot prove --replay } } `
+            -InContainer "cd /src/verification/creusot/escape && cargo creusot && cargo creusot prove --replay"
     }
 }
 

@@ -1,0 +1,26 @@
+[package]
+name = "fuaran-core-kani"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Kani harnesses over the fuaran-core spine: the canonical escape on the empty and every one-byte ASCII string, and the frontier rungs beyond it (feature `frontier`)."
+license = "Apache-2.0"
+
+# Not a member of the spine's package: the spine's own build, tests and no_std
+# profile never see this crate.
+[workspace]
+
+[dependencies]
+fuaran-core = { path = "../.." }
+
+[features]
+# The rungs that do not close on a 16 GB machine — the longer escape rungs and every
+# reader rung — authored and measured (see ../README.md). Off by default so
+# `cargo kani` here proves what is provable.
+frontier = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
+[package.metadata.kani]
+unstable = { stubbing = true }

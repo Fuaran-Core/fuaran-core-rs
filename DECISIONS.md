@@ -75,3 +75,31 @@ Certified against the reference's vectors (`tests/conformance.rs`), every vector
 
 A rejection is answered in the reference's own vocabulary (its canonical rejection bytes), not mapped to
 another host's codes, because this crate IS the reference's twin.
+
+## D7 — 2026-10-24 — what is proved directly, and what is not (Phase 486's verdict)
+
+The question was whether the spine's parser and its limits can be proved directly — a model
+checker over the Rust, rather than conformance against the reference's vectors — and at what cost.
+The verdict, with the measurements behind it in [verification/README.md](verification/README.md):
+
+- **The writer's pure functions: proved, cheaply, under Creusot — adopted.** The canonical escape
+  is proved, byte for byte, to return exactly the reference proof's `quoted` of its input, against
+  Pearlite twins of `WireCanon.fst`'s `esc_ch` / `escape` / `quoted` written clause for clause.
+  About an hour of proof engineering, a two-second replay as the gate, the toolchain pinned in a
+  Dockerfile. The proved function is a twin of `escape_string` over bytes, not the crate's function,
+  and the agreement with the F\* model is by transliteration; both gaps are stated where the claim is.
+- **The reader: not provable with Kani as it stands — measured, not adopted.** Every rung over a
+  symbolic input, down to ONE byte, exhausts 15 GB; a concrete `[]` does not finish in seven minutes
+  where a concrete `7` takes six seconds. The cost is the reader's `Vec`/`String` growth path under
+  symbolic positions, not the UTF-8 validation, the symbolic bounds or the harness's counting
+  allocator — each was removed in turn and the rung failed the same way. The harnesses stay in the
+  tree behind a feature with their measurements, so the next attempt starts from the numbers.
+- **Kani is kept for what closes**: `escape_string` over the empty and every one-byte ASCII
+  string — two symbolic bytes already exhaust the memory, because anything that grows a `String`
+  or a `Vec` under symbolic content does — as an opt-in `run.ps1 -Verify` leg beside the Creusot
+  replay. Both legs run natively or in Docker,
+  skip with a named reason when neither is available, and fail when a proof does not check.
+
+What would change the reader's verdict is a reader restructured for checking (one arena, no
+reallocation on the parse path) or a proof-carrying extraction from the reference's F\*; neither is
+this phase's, and both are named under the write-up's `SUCCESSOR`.

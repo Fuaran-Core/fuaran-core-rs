@@ -17,3 +17,8 @@ default = []
 std = []
 
 [dependencies]
+
+# `cfg(kani)` is set by the Kani model checker, which builds the harnesses in
+# verification/kani/ (see verification/README.md); nothing else sets it.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

@@ -916,6 +916,97 @@ pub fn render_canonical(v: &JVal) -> String {
     }
 }
 
+/// The reader, run over a value model a bounded model checker can afford. Built
+/// only under `cfg(kani)`; the harnesses live in `verification/kani/`.
+///
+/// It is the SAME reader [`read`] runs — [`scan`], every grammar row and every
+/// bound — with [`Build`] instantiated at [`kani_support::Shape`], which keeps of a
+/// value only the four measures the limits guard. [`JVal`]'s recursive drop glue is
+/// what makes the public entry intractable to a model checker past a few bytes:
+/// every drop site unrolls the recursion to the full unwinding bound whatever the
+/// value's real depth, and the model grows exponentially in it.
+#[cfg(kani)]
+pub mod kani_support {
+    use super::{Build, JsonLimits, JsonRefusal, scan};
+    use crate::prelude::*;
+
+    /// What a read built, reduced to the measure each bound guards: the nesting
+    /// depth, and the largest string (in code points), array and object in it.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct Shape {
+        pub depth: usize,
+        pub string_length: usize,
+        pub array_length: usize,
+        pub object_members: usize,
+    }
+
+    impl Shape {
+        fn join(self, other: Shape) -> Shape {
+            Shape {
+                depth: self.depth.max(other.depth),
+                string_length: self.string_length.max(other.string_length),
+                array_length: self.array_length.max(other.array_length),
+                object_members: self.object_members.max(other.object_members),
+            }
+        }
+    }
+
+    /// Code points of a `str`: the bytes that do not continue a UTF-8 sequence. A
+    /// plain byte loop, where `chars().count()` is a chunked word-at-a-time loop the
+    /// model checker unrolls far less cheaply.
+    fn code_points(s: &str) -> usize {
+        s.bytes().filter(|b| b & 0xC0 != 0x80).count()
+    }
+
+    struct ShapeBuild;
+
+    impl Build for ShapeBuild {
+        type V = Shape;
+        fn null() -> Option<Shape> {
+            Some(Shape::default())
+        }
+        fn boolean(_: bool) -> Shape {
+            Shape::default()
+        }
+        fn number(_: f64, _: bool) -> Shape {
+            Shape::default()
+        }
+        fn string(s: String) -> Shape {
+            Shape {
+                string_length: code_points(&s),
+                ..Shape::default()
+            }
+        }
+        fn array(items: Vec<Shape>) -> Shape {
+            let inner = items.iter().fold(Shape::default(), |a, s| a.join(*s));
+            Shape {
+                depth: inner.depth + 1,
+                array_length: inner.array_length.max(items.len()),
+                ..inner
+            }
+        }
+        fn object(members: Vec<(String, Shape)>) -> Shape {
+            let inner = members.iter().fold(Shape::default(), |a, (k, s)| {
+                let name = Shape {
+                    string_length: code_points(k),
+                    ..Shape::default()
+                };
+                a.join(*s).join(name)
+            });
+            Shape {
+                depth: inner.depth + 1,
+                object_members: inner.object_members.max(members.len()),
+                ..inner
+            }
+        }
+    }
+
+    /// [`super::read`], building a [`Shape`] in place of a [`super::JVal`].
+    pub fn read_shape(input: &str, limits: &JsonLimits) -> Result<Shape, JsonRefusal> {
+        scan::<ShapeBuild>(input, limits)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -37,6 +37,22 @@ pwsh ./run.ps1
 `run.ps1` checks formatting, runs clippy, builds, runs the tests (the conformance legs among
 them), and builds the `no_std` profile for `thumbv7em-none-eabihf` (Cortex-M4F).
 
+## Verification
+
+`verification/` holds the machine-checked proofs over the spine, and
+[verification/README.md](verification/README.md) says what each proves, at what cost, and what it
+does not: a Creusot proof that the canonical escape agrees with the reference's model of it, and
+the Kani harnesses over the limited reader with the measured frontier they reach. They are opt-in,
+because the checkers run on Linux:
+
+```powershell
+pwsh ./run.ps1 -Verify
+```
+
+runs each natively when its tool is on PATH, else in Docker from the pinned `Dockerfile` beside it,
+and skips with a named reason when neither is available. A proof that runs and does not check fails
+the run.
+
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
