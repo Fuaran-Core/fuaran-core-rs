@@ -104,7 +104,8 @@ The verdict, with the measurements behind it in [verification/README.md](verific
   replay. Both legs run natively or in Docker,
   skip with a named reason when neither is available, and fail when a proof does not check.
 
-What would change the reader's verdict is a reader restructured for checking (one arena, no
+*Amended by D10 (2026-10-24): the restructured reader was measured, and it does not close a rung.* What would
+change the reader's verdict is a reader restructured for checking (one arena, no
 reallocation on the parse path) or a proof-carrying extraction from the reference's F\*; neither is
 this phase's, and both are named under the write-up's `SUCCESSOR`.
 
@@ -135,7 +136,8 @@ Three rulings sit inside it.
   union from its IDL declaration: the unions, records and enums are tables, and one interpreter reads, refuses and
   re-encodes them, strict or lenient. Thirteen hand-written readers would restate the tables. A typed Rust value
   per seam union is not offered until a consumer needs one.
-- **The recursion premise is answered on a stated stack, and that stack is large.** The reader recurses once per
+- *Amended by D10 (2026-10-24): the reader no longer recurses, and the probe runs on a 64 KiB thread.*
+  **The recursion premise is answered on a stated stack, and that stack is large.** The reader recurses once per
   nesting level and refuses past 512 before it descends, so it never overflows a stack that holds 512 levels; the
   probe leg runs on a 2 MiB thread. Measured on x86_64: a debug build needs more than 1 MiB for the 512-deep
   documents and a release build more than 256 KiB (384 KiB holds it). That is above a microcontroller's stack,
@@ -173,3 +175,61 @@ Phase 566 closes the first gap D7 states and makes the proof something the refer
 - **The proofs run in CI on demand only.** `.github/workflows/verify.yml` runs `run.ps1 -Verify` on
   `workflow_dispatch`, never on a push: building the two images costs the better part of an hour for a replay that
   takes a second.
+
+## D10 — 2026-10-24 — the reader and the writer keep their nesting on the heap
+
+Phase 567 closes the stack question D8 left open: the depth premise now holds on a microcontroller's stack at the
+reference's 512, not only on a desktop thread.
+
+- **Neither the reader nor the canonical writer recurses.** The reader's nesting state is an explicit stack of
+  frames, one per open container (its items or members so far, the names seen, the member being read). The stack is
+  ONE allocation, made when the first container opens and sized to every container the read can have open at once:
+  the depth bound, or the opening brackets left in the document when there are fewer, since each open container
+  consumed one. Nothing on the parse path grows it; the push asserts as much in a debug build. A breach's path is
+  read off the stack, root first, where it was assembled on the way back out of the recursion. `render_canonical`
+  writes into one buffer with its own explicit stack. The depth bound is still checked before a container opens,
+  and still always bounded, because it now sizes that allocation.
+- **Nothing a caller sees moved.** Every family stays green, and a differential run of the new reader against the
+  recursive one (Phase 564's, `ad4910f`) over 1,000,000 generated documents, malformed and well-formed, under random
+  limits records and through both value models, found every read, refusal (kind, offset, message, bound, path) and
+  rendering identical. The same run goes red when a frame's path step is planted one off.
+- **Measured stack**, x86_64, the smallest thread on which 512-deep arrays and objects read (and write back):
+
+  | Build | Recursive reader (D8) | This reader and writer |
+  |---|---|---|
+  | Linux, debug | 644 KiB (arrays), 1,020 KiB (objects) | 16 KiB, the smallest thread Linux starts |
+  | Linux, release | 280 KiB | 16 KiB |
+  | Windows, debug | 768 KiB, 1,280 KiB | 64 KiB, the smallest thread Windows starts |
+  | Windows, release | 384 KiB | 64 KiB |
+
+  100,000 levels are refused on the same threads. The probe leg (`tests/premises.rs`) runs on 64 KiB, in debug under
+  `cargo test` and in release under `run.ps1`'s release leg, and the recursive reader overflows it.
+- **What still recurses is a value's drop.** `JVal` and `decode::Value` are owned trees, and the compiler's drop glue
+  for them recurses once per level: dropping a 512-deep value needs 104–128 KiB in a debug build and 40 KiB in a
+  release build on Linux (256 and 128 KiB on Windows). The probe hands the values it accepted back to the calling
+  thread to drop, and says why. Making the teardown constant-stack means a `Drop` implementation on the public value
+  types, which forbids moving a field out of a value by pattern, a breaking change to every consumer that
+  destructures a value it owns. That is not this additive phase's to take, so it is recorded open for a successor
+  phase to rule on.
+- **Parse throughput** (release, x86_64, the median of seven alternating runs against the recursive reader):
+
+  | Input | Recursive | Heap stack | Change |
+  |---|---|---|---|
+  | Core's 30 conformance documents (428 KB) | 163 MB/s | 153 MB/s | −6% |
+  | one array of 100,000 numbers | 225 MB/s | 211 MB/s | −6% |
+  | one array of 20,000 small objects | 77 MB/s | 82 MB/s | +6% |
+  | 2,000 nine-byte objects, read one at a time | 68 MB/s | 56 MB/s | −17% |
+  | 2,000 scalar documents | 217 MB/s | 193 MB/s | −11% |
+  | 512-deep arrays / objects | 46 / 44 MB/s | 52 / 44 MB/s | +14% / 0% |
+
+  The tiny documents pay the stack's one allocation, which a document that opens a container now makes. The writer,
+  which no longer builds a string per sub-value, is faster on every input measured: 2.2 times on the corpus, 5.5 times on the
+  512-deep objects. Taken as the price of the premise.
+- **Kani: no reader rung closes, and the restructuring was not what they lacked** (D7's premise, refuted at these
+  rungs). Phase 486's rungs were re-run over both readers in the same pinned image, alone, under a 14 GiB cap
+  (measurements in [verification/README.md](verification/README.md)): `limits_n1_d0`, `limits_n2_d0` and
+  `read_n1_d0` run out of memory over both, the heap-stack reader's model 5–26% larger in CBMC's program steps, and
+  `limits_n2_d1` is unfinished at nine minutes. The depth-0 rungs never open a container, so their cost was never the
+  nesting stack: it is the strings and items every read still grows under symbolic content, which is D7's own
+  finding. D7's verdict for the reader stands, and what would change it is no longer "one arena" but a reader whose
+  strings and items do not grow under the checker (a counted pre-pass, or a proof-carrying extraction).

@@ -133,6 +133,22 @@ toolchain), CBMC with `--unwind` N+2:
 | `escape_len2` / `escape_len3` | every 2- and 3-byte ASCII string | out of memory at 1 min 18 s and 1 min 37 s |
 | `escape_n1`, symbolic length 0..=1 | 1 symbolic byte, symbolic length | out of memory |
 
+**Re-run over the heap-stack reader (Phase 567, `DECISIONS.md` D10).** The reader no longer recurses and keeps its
+nesting in one allocation that never grows. Each rung was run alone over both readers in the same image, under a
+14 GiB cap, so the two columns compare:
+
+| Rung | Recursive reader | Heap-stack reader |
+|---|---|---|
+| `limits_n1_d0` | out of memory at 1 min 21 s; 760,995 program steps | out of memory at 1 min 32 s; 958,425 steps |
+| `limits_n2_d0` | out of memory at 1 min 53 s; 1,129,282 steps | out of memory at 1 min 41 s; 1,356,099 steps |
+| `read_n1_d0` | out of memory at 5 min 12 s; 3,961,189 steps | out of memory at 5 min 20 s; 4,165,522 steps |
+| `limits_n2_d1` | — | 9 minute timeout, unfinished |
+| `read` of a concrete text under `STRICT`, with and without the counting allocator | `7`: 5 minute timeout, unfinished | `7`, `[]`, `[[0]]`: 5 minute timeout, unfinished |
+
+No rung closes. The depth-0 rungs never open a container, so the nesting stack was never their cost; the strings and
+items a read grows are, as above. (The concrete controls here time out over both readers where the earlier `read("7")`
+control verified, so they differ from it in a way not chased down; they discriminate nothing between the readers.)
+
 So the checker is fine on this crate (the controls), the UTF-8 validation is not the cost
 (ASCII-only fails the same way), the symbolic bounds are not the cost (concrete bounds fail the
 same way), and the counting allocator is not the cost (it fails without one). What fails is
@@ -156,9 +172,9 @@ out of memory), and the well-formedness it checks is the escape's argument, stat
 Creusot leg's gaps, not these rungs' claim.
 
 **Verdict: do not adopt for the reader; keep what closes.** The reader rungs and the longer
-escape rungs stay in the tree behind the `frontier` feature, with this table, so the next attempt — a bigger machine, a
-newer Kani, or a reader restructured for checking (one arena, no reallocation on the parse
-path) — is one flag away and starts from the measurement rather than from a blank page. The
+escape rungs stay in the tree behind the `frontier` feature, with these tables, so the next attempt — a bigger machine, a
+newer Kani, or a reader whose strings and items do not grow under the checker (one arena for the nesting alone was
+tried, and is the second table) — is one flag away and starts from the measurement rather than from a blank page. The
 two closing rungs run under `-Verify`. The allocation ceiling in the harness (`PEAK_CEILING`) is a
 bound to be found by lowering it until a rung fails; no rung has closed, so it is not a proved
 figure and the write-up does not call it one.

@@ -175,7 +175,8 @@ fn premise_sha256() {
 /// harness, and small: the reader and the canonical writer keep their nesting on
 /// the heap, so the native stack they use is the same at every depth, and the
 /// depths are read, refused and written back on a stack a microcontroller has.
-/// Measured on x86_64 (DECISIONS.md D10): both run in 8 KiB, debug and release.
+/// Measured on x86_64 (DECISIONS.md D10): both run on the smallest thread each
+/// platform starts (16 KiB on Linux, 64 KiB on Windows), debug and release.
 /// The leg runs debug under `cargo test` and release under `run.ps1`'s release leg.
 const PROBE_STACK_BYTES: usize = 64 * 1024;
 
