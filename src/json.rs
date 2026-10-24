@@ -26,8 +26,8 @@
 //! container it was raised in, and is never reported as malformed text; the first
 //! fault in document order wins, whichever kind it is. The values belong to each
 //! wire: a host passes its specification's numbers and maps the breach to its own
-//! envelope. [`JsonLimits::STRICT`] bounds the depth at 512, the reader's own
-//! stack guard, and nothing else.
+//! envelope. [`JsonLimits::STRICT`] bounds the depth at 512, the reference's cap,
+//! and nothing else.
 //!
 //! The model and its answers are certified against Core's `refusals/` (the `json`
 //! vectors) and `decode/` families.
@@ -201,7 +201,8 @@ impl JsonRefusal {
 }
 
 /// The bounds a read enforces on the way down. `None` is unbounded; the depth is
-/// always bounded, because it is the reader's stack guard.
+/// always bounded, because it sizes the reader's nesting stack: at most one frame
+/// per level, allocated once, on the heap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JsonLimits {
     pub depth: usize,
@@ -212,7 +213,7 @@ pub struct JsonLimits {
 }
 
 impl JsonLimits {
-    /// The reader's own stack guard: nesting past 512 is refused, and no other
+    /// The reference's depth cap: nesting past 512 is refused, and no other
     /// bound applies. Deliberately looser than any wire's bound, so the reader
     /// never refuses a document a wire says a host must accept.
     pub const STRICT: JsonLimits = JsonLimits::depth_only(512);
@@ -236,19 +237,6 @@ impl Default for JsonLimits {
 }
 
 type PResult<T> = Result<T, JsonRefusal>;
-
-/// Adds the step the refusal passed through on its way out. Only a breach
-/// carries a path; malformed text is refused at the root by every reading.
-fn within<T>(r: PResult<T>, seg: impl FnOnce() -> PathSeg) -> PResult<T> {
-    r.map_err(|e| match e {
-        JsonRefusal::LimitExceeded(mut b) => {
-            // Pushed inner-first on the way out; `scan` reverses once at the top.
-            b.path.push(seg());
-            JsonRefusal::LimitExceeded(b)
-        }
-        other => other,
-    })
-}
 
 // ─── The reader ──────────────────────────────────────────────────────────────
 
@@ -295,12 +283,35 @@ struct Parser<'a, B> {
     src: &'a str,
     bytes: &'a [u8],
     pos: usize,
-    /// Containers open, counted on the way DOWN, before the recursion that would
-    /// pass the bound. Without it the reader is unbounded mutual recursion, and a
-    /// stack overflow aborts the process — not a condition any `Result` reports.
-    depth: usize,
     limits: JsonLimits,
     build: PhantomData<B>,
+}
+
+/// One open container on the reader's nesting stack: what has been read of it so
+/// far. The stack is the reader's whole nesting state, so the native stack a read
+/// uses is the same at every depth.
+enum Frame<V> {
+    Array(Vec<V>),
+    Object {
+        members: Vec<(String, V)>,
+        /// The names seen so far: a set keeps the row-1 refusal linear in width,
+        /// where scanning every earlier member made a wide object quadratic.
+        seen: BTreeSet<String>,
+        /// The name of the member whose value is being read, and the offset of
+        /// its opening quote.
+        key: String,
+        key_at: usize,
+    },
+}
+
+impl<V> Frame<V> {
+    /// The step from this container to the child being read in it.
+    fn step(&self) -> PathSeg {
+        match self {
+            Frame::Array(items) => PathSeg::Index(items.len()),
+            Frame::Object { key, .. } => PathSeg::Key(key.clone()),
+        }
+    }
 }
 
 impl<'a, B: Build> Parser<'a, B> {
@@ -321,11 +332,14 @@ impl<'a, B: Build> Parser<'a, B> {
         }))
     }
 
-    fn breach<T>(&self, limit: JsonLimit, value: usize) -> PResult<T> {
+    /// A bound passed in the innermost of the `open` containers, at the path they
+    /// spell from the root. Only a breach carries a path; malformed text is refused
+    /// at the root by every reading.
+    fn breach<T>(&self, limit: JsonLimit, value: usize, open: &[Frame<B::V>]) -> PResult<T> {
         Err(JsonRefusal::LimitExceeded(LimitBreach {
             limit,
             value,
-            path: Vec::new(),
+            path: open.iter().map(Frame::step).collect(),
             offset: self.pos,
         }))
     }
@@ -370,7 +384,10 @@ impl<'a, B: Build> Parser<'a, B> {
     ///   Measuring afterwards has already paid the allocation the bound exists to
     ///   refuse, and counting bytes would make the allowance depend on the
     ///   alphabet the author writes in.
-    fn parse_string(&mut self) -> PResult<String> {
+    ///
+    /// `open` is the containers the string is read in, for a breach's path: every
+    /// open one for a string value, all but the object itself for a member name.
+    fn parse_string(&mut self, open: &[Frame<B::V>]) -> PResult<String> {
         self.expect(b'"')?;
         let mut out = String::new();
         let mut code_points: usize = 0;
@@ -380,7 +397,7 @@ impl<'a, B: Build> Parser<'a, B> {
         let admit = |p: &Self, count: &mut usize| -> PResult<()> {
             if let Some(max) = bound {
                 if *count >= max {
-                    return p.breach(JsonLimit::StringLength, max);
+                    return p.breach(JsonLimit::StringLength, max, open);
                 }
             }
             *count += 1;
@@ -569,152 +586,195 @@ impl<'a, B: Build> Parser<'a, B> {
         }
     }
 
-    fn parse_value(&mut self) -> PResult<B::V> {
-        self.skip_ws();
-        let Some(&c) = self.bytes.get(self.pos) else {
-            return self.fail(
-                JsonErrorKind::UnexpectedEndOfInput,
-                "unexpected end of input",
-            );
-        };
-        match c {
-            b'{' | b'[' => {
-                // Refused BEFORE descending: a check after the walk has already paid
-                // the cost it exists to refuse, and here it would never run at all.
-                if self.depth >= self.limits.depth {
-                    return self.breach(JsonLimit::Depth, self.limits.depth);
-                }
-                self.depth += 1;
-                let r = if c == b'{' {
-                    self.parse_object()
-                } else {
-                    self.parse_array()
-                };
-                self.depth -= 1;
-                r
-            }
-            b'"' => self.parse_string().map(B::string),
-            b't' => self.literal("true", || Ok(B::boolean(true))),
-            b'f' => self.literal("false", || Ok(B::boolean(false))),
-            b'n' => {
-                let at = self.pos;
-                self.literal("null", || {
-                    B::null().ok_or(JsonRefusal::Malformed(JsonError {
-                        kind: JsonErrorKind::NullNotRepresentable,
-                        offset: at,
-                        message: "null is not representable in this reading".to_string(),
-                    }))
-                })
-            }
-            b'-' | b'0'..=b'9' => self.parse_number(),
-            other => self.fail(
-                JsonErrorKind::UnexpectedChar,
-                format!("unexpected character '{}'", other as char),
-            ),
-        }
-    }
-
-    fn parse_object(&mut self) -> PResult<B::V> {
-        self.expect(b'{')?;
-        self.skip_ws();
-        let mut members: Vec<(String, B::V)> = Vec::new();
-        // The names seen so far: a set keeps the row-1 refusal linear in width,
-        // where scanning every earlier member made a wide object quadratic.
-        let mut seen: BTreeSet<String> = BTreeSet::new();
-        if self.bytes.get(self.pos) == Some(&b'}') {
-            self.pos += 1;
-            return Ok(B::object(members));
-        }
-        loop {
+    /// The document's one value, read without recursion: the containers open
+    /// around the current position are an explicit stack, so a read uses the same
+    /// native stack at every depth, and a depth bound is a property of the limits
+    /// record rather than of the thread the read happens to run on.
+    ///
+    /// The stack lives in ONE allocation, made when the first container opens and
+    /// sized to hold every container the read can have open at once: the depth
+    /// bound, or the opening brackets left in the document when there are fewer
+    /// (each open container consumed one). Nothing on the parse path grows it.
+    fn parse_document(&mut self) -> PResult<B::V> {
+        let mut open: Vec<Frame<B::V>> = Vec::new();
+        'value: loop {
+            // One value. A scalar is complete at once; a container that does not
+            // close at once is pushed, and the loop goes round for its first child.
             self.skip_ws();
-            if let Some(max) = self.limits.object_members {
-                if members.len() >= max {
-                    return self.breach(JsonLimit::ObjectMembers, max);
-                }
-            }
-            let key_at = self.pos;
-            let key = self.parse_string()?;
-            self.skip_ws();
-            self.expect(b':')?;
-            let value = within(self.parse_value(), || PathSeg::Key(key.clone()))?;
-            // Row 1 — refused when the member is accumulated, after its value is
-            // read, at the repeated name's opening quote. It changes what a
-            // document MEANS rather than whether it is accepted: hosts kept the
-            // first or the last occurrence, so identical bytes read as different
-            // documents with no error raised anywhere.
-            if !seen.insert(key.clone()) {
-                return self.fail_at(
-                    JsonErrorKind::DuplicateMember,
-                    key_at,
-                    format!(
-                        "the member '{key}' appears more than once in one object (the JSON-syntax \
-                         layer, row 1)"
-                    ),
+            let Some(&c) = self.bytes.get(self.pos) else {
+                return self.fail(
+                    JsonErrorKind::UnexpectedEndOfInput,
+                    "unexpected end of input",
                 );
-            }
-            members.push((key, value));
-            self.skip_ws();
-            match self.bytes.get(self.pos) {
-                Some(b',') => self.pos += 1,
-                Some(b'}') => {
+            };
+            let mut done = match c {
+                b'{' | b'[' => {
+                    // Refused BEFORE the container opens: a check after the walk
+                    // has already paid the cost it exists to refuse.
+                    if open.len() >= self.limits.depth {
+                        return self.breach(JsonLimit::Depth, self.limits.depth, &open);
+                    }
+                    if open.capacity() == 0 {
+                        let brackets = self.bytes[self.pos..]
+                            .iter()
+                            .filter(|&&b| b == b'{' || b == b'[')
+                            .count();
+                        open = Vec::with_capacity(self.limits.depth.min(brackets));
+                    }
                     self.pos += 1;
-                    return Ok(B::object(members));
+                    self.skip_ws();
+                    let empty = if c == b'[' { b']' } else { b'}' };
+                    if self.bytes.get(self.pos) == Some(&empty) {
+                        self.pos += 1;
+                        if c == b'[' {
+                            B::array(Vec::new())
+                        } else {
+                            B::object(Vec::new())
+                        }
+                    } else {
+                        let mut frame = if c == b'[' {
+                            Frame::Array(Vec::new())
+                        } else {
+                            Frame::Object {
+                                members: Vec::new(),
+                                seen: BTreeSet::new(),
+                                key: String::new(),
+                                key_at: 0,
+                            }
+                        };
+                        self.next_child(&mut frame, &open)?;
+                        debug_assert!(open.len() < open.capacity(), "the arena never grows");
+                        open.push(frame);
+                        continue 'value;
+                    }
                 }
-                Some(&other) => {
+                b'"' => B::string(self.parse_string(&open)?),
+                b't' => self.literal("true", || Ok(B::boolean(true)))?,
+                b'f' => self.literal("false", || Ok(B::boolean(false)))?,
+                b'n' => {
+                    let at = self.pos;
+                    self.literal("null", || {
+                        B::null().ok_or(JsonRefusal::Malformed(JsonError {
+                            kind: JsonErrorKind::NullNotRepresentable,
+                            offset: at,
+                            message: "null is not representable in this reading".to_string(),
+                        }))
+                    })?
+                }
+                b'-' | b'0'..=b'9' => self.parse_number()?,
+                other => {
                     return self.fail(
-                        JsonErrorKind::ExpectedToken,
-                        format!("expected ',' or '}}' but found '{}'", other as char),
+                        JsonErrorKind::UnexpectedChar,
+                        format!("unexpected character '{}'", other as char),
                     );
                 }
-                None => {
-                    return self.fail(
-                        JsonErrorKind::UnexpectedEndOfInput,
-                        "unexpected end of input",
-                    );
+            };
+            // Hand the finished value to the container it was read in, closing
+            // each container it completes, until one wants another child or the
+            // root is done.
+            loop {
+                let Some((frame, outer)) = open.split_last_mut() else {
+                    return Ok(done);
+                };
+                let close = match frame {
+                    Frame::Array(items) => {
+                        items.push(done);
+                        b']'
+                    }
+                    Frame::Object {
+                        members,
+                        seen,
+                        key,
+                        key_at,
+                    } => {
+                        // Row 1 — refused when the member is accumulated, after its
+                        // value is read, at the repeated name's opening quote. It
+                        // changes what a document MEANS rather than whether it is
+                        // accepted: hosts kept the first or the last occurrence, so
+                        // identical bytes read as different documents with no error
+                        // raised anywhere.
+                        if !seen.insert(key.clone()) {
+                            return self.fail_at(
+                                JsonErrorKind::DuplicateMember,
+                                *key_at,
+                                format!(
+                                    "the member '{key}' appears more than once in one object \
+                                     (the JSON-syntax layer, row 1)"
+                                ),
+                            );
+                        }
+                        members.push((core::mem::take(key), done));
+                        b'}'
+                    }
+                };
+                self.skip_ws();
+                match self.bytes.get(self.pos) {
+                    Some(b',') => {
+                        self.pos += 1;
+                        self.next_child(frame, outer)?;
+                        continue 'value;
+                    }
+                    Some(&b) if b == close => {
+                        self.pos += 1;
+                        done = match open.pop() {
+                            Some(Frame::Array(items)) => B::array(items),
+                            Some(Frame::Object { members, .. }) => B::object(members),
+                            None => unreachable!("the container just closed is on the stack"),
+                        };
+                    }
+                    Some(&other) => {
+                        return self.fail(
+                            JsonErrorKind::ExpectedToken,
+                            format!(
+                                "expected ',' or '{}' but found '{}'",
+                                close as char, other as char
+                            ),
+                        );
+                    }
+                    None => {
+                        return self.fail(
+                            JsonErrorKind::UnexpectedEndOfInput,
+                            "unexpected end of input",
+                        );
+                    }
                 }
             }
         }
     }
 
-    fn parse_array(&mut self) -> PResult<B::V> {
-        self.expect(b'[')?;
-        self.skip_ws();
-        let mut items: Vec<B::V> = Vec::new();
-        if self.bytes.get(self.pos) == Some(&b']') {
-            self.pos += 1;
-            return Ok(B::array(items));
-        }
-        loop {
-            // Where the next item would start, before a character of it is read.
-            if let Some(max) = self.limits.array_length {
-                if items.len() >= max {
-                    self.skip_ws();
-                    return self.breach(JsonLimit::ArrayLength, max);
+    /// Up to where the next child of `frame` starts: for an array, the item bound,
+    /// checked before a character of the item is read; for an object, the member
+    /// bound, then the member's name and its `:`. `outer` is the containers around
+    /// `frame`, which spell a breach's path.
+    fn next_child(&mut self, frame: &mut Frame<B::V>, outer: &[Frame<B::V>]) -> PResult<()> {
+        match frame {
+            Frame::Array(items) => {
+                if let Some(max) = self.limits.array_length {
+                    if items.len() >= max {
+                        self.skip_ws();
+                        return self.breach(JsonLimit::ArrayLength, max, outer);
+                    }
                 }
             }
-            let index = items.len();
-            items.push(within(self.parse_value(), || PathSeg::Index(index))?);
-            self.skip_ws();
-            match self.bytes.get(self.pos) {
-                Some(b',') => self.pos += 1,
-                Some(b']') => {
-                    self.pos += 1;
-                    return Ok(B::array(items));
+            Frame::Object {
+                members,
+                key,
+                key_at,
+                ..
+            } => {
+                self.skip_ws();
+                if let Some(max) = self.limits.object_members {
+                    if members.len() >= max {
+                        return self.breach(JsonLimit::ObjectMembers, max, outer);
+                    }
                 }
-                Some(&other) => {
-                    return self.fail(
-                        JsonErrorKind::ExpectedToken,
-                        format!("expected ',' or ']' but found '{}'", other as char),
-                    );
-                }
-                None => {
-                    return self.fail(
-                        JsonErrorKind::UnexpectedEndOfInput,
-                        "unexpected end of input",
-                    );
-                }
+                *key_at = self.pos;
+                *key = self.parse_string(outer)?;
+                self.skip_ws();
+                self.expect(b':')?;
             }
         }
+        Ok(())
     }
 }
 
@@ -801,17 +861,10 @@ pub(crate) fn scan<B: Build>(input: &str, limits: &JsonLimits) -> PResult<B::V> 
         src: input,
         bytes: input.as_bytes(),
         pos: 0,
-        depth: 0,
         limits: *limits,
         build: PhantomData,
     };
-    let value = p.parse_value().map_err(|e| match e {
-        JsonRefusal::LimitExceeded(mut b) => {
-            b.path.reverse();
-            JsonRefusal::LimitExceeded(b)
-        }
-        other => other,
-    })?;
+    let value = p.parse_document()?;
     p.skip_ws();
     if p.pos < p.bytes.len() {
         return p.fail(
@@ -822,7 +875,7 @@ pub(crate) fn scan<B: Build>(input: &str, limits: &JsonLimits) -> PResult<B::V> 
     Ok(value)
 }
 
-/// Read a document under the reader's own stack guard ([`JsonLimits::STRICT`]).
+/// Read a document under the reference's depth cap ([`JsonLimits::STRICT`]).
 pub fn parse(input: &str) -> Result<JVal, JsonRefusal> {
     scan::<JValBuild>(input, &JsonLimits::STRICT)
 }
@@ -891,22 +944,70 @@ pub fn render_array(items: &[String]) -> String {
 
 /// A value's canonical bytes: names sorted ordinally, the canonical number form,
 /// the canonical escapes. For a canonical input, `render_canonical(&parse(x)?) == x`.
+///
+/// Written into one buffer without recursion, as the reader reads: the containers
+/// open around the value being written are an explicit stack, so writing a value
+/// back uses the same native stack at every depth.
 pub fn render_canonical(v: &JVal) -> String {
-    match v {
-        JVal::Null => "null".to_string(),
-        JVal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        JVal::Num(n) => format_number(*n),
-        JVal::Str(s) => escape_string(s),
-        JVal::Arr(items) => {
-            let rendered: Vec<String> = items.iter().map(render_canonical).collect();
-            render_array(&rendered)
+    /// An open container: the children still to write, and whether one has been
+    /// written (so the next is preceded by a comma).
+    enum Open<'a> {
+        Arr(core::slice::Iter<'a, JVal>, bool),
+        Obj(vec::IntoIter<&'a (String, JVal)>, bool),
+    }
+    let mut out = String::new();
+    let mut open: Vec<Open<'_>> = Vec::new();
+    let mut next = v;
+    loop {
+        match next {
+            JVal::Null => out.push_str("null"),
+            JVal::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            JVal::Num(n) => out.push_str(&format_number(*n)),
+            JVal::Str(s) => out.push_str(&escape_string(s)),
+            JVal::Arr(items) => {
+                out.push('[');
+                open.push(Open::Arr(items.iter(), false));
+            }
+            JVal::Obj(fields) => {
+                out.push('{');
+                let mut sorted: Vec<&(String, JVal)> = fields.iter().collect();
+                sorted.sort_by(|a, b| ordinal_cmp(&a.0, &b.0));
+                open.push(Open::Obj(sorted.into_iter(), false));
+            }
         }
-        JVal::Obj(fields) => {
-            let mut rendered: Vec<(String, String)> = fields
-                .iter()
-                .map(|(k, v)| (k.clone(), render_canonical(v)))
-                .collect();
-            render_object(&mut rendered)
+        // The next child of the innermost open container, closing each container
+        // that has none left.
+        loop {
+            let Some(top) = open.last_mut() else {
+                return out;
+            };
+            let child = match top {
+                Open::Arr(items, any) => items.next().inspect(|_| {
+                    if core::mem::replace(any, true) {
+                        out.push(',');
+                    }
+                }),
+                Open::Obj(members, any) => members.next().map(|(name, item)| {
+                    if core::mem::replace(any, true) {
+                        out.push(',');
+                    }
+                    out.push_str(&escape_string(name));
+                    out.push(':');
+                    item
+                }),
+            };
+            match child {
+                Some(item) => {
+                    next = item;
+                    break;
+                }
+                None => {
+                    out.push(match open.pop() {
+                        Some(Open::Arr(..)) => ']',
+                        _ => '}',
+                    });
+                }
+            }
         }
     }
 }
@@ -1161,6 +1262,46 @@ mod tests {
         assert_eq!(
             breach("\"\u{65E5}\"", &bytes).limit,
             JsonLimit::DocumentBytes
+        );
+    }
+
+    /// The nesting stack spells a breach's path: every container around the
+    /// breach, root first, each by the step to the child being read in it, and not
+    /// the container a length bound or a member name is read in.
+    #[test]
+    fn a_breach_path_names_the_containers_around_it() {
+        let key = |k: &str| PathSeg::Key(k.to_string());
+        let at = |input: &str, limits: JsonLimits| {
+            let b = breach(input, &limits);
+            (b.limit, b.path)
+        };
+        let lim = |f: fn(&mut JsonLimits)| {
+            let mut l = JsonLimits::STRICT;
+            f(&mut l);
+            l
+        };
+        assert_eq!(
+            at("{\"a\":[[1]]}", JsonLimits::depth_only(2)),
+            (JsonLimit::Depth, vec![key("a"), PathSeg::Index(0)])
+        );
+        assert_eq!(
+            at("{\"a\":[1,2,3]}", lim(|l| l.array_length = Some(2))),
+            (JsonLimit::ArrayLength, vec![key("a")])
+        );
+        assert_eq!(
+            at("[0,{\"a\":1,\"b\":2}]", lim(|l| l.object_members = Some(1))),
+            (JsonLimit::ObjectMembers, vec![PathSeg::Index(1)])
+        );
+        assert_eq!(
+            at("[{\"x\":{\"abcd\":1}}]", lim(|l| l.string_length = Some(3))),
+            (JsonLimit::StringLength, vec![PathSeg::Index(0), key("x")])
+        );
+        assert_eq!(
+            at(
+                "{\"a\":{\"b\":\"abcd\"}}",
+                lim(|l| l.string_length = Some(3))
+            ),
+            (JsonLimit::StringLength, vec![key("a"), key("b")])
         );
     }
 

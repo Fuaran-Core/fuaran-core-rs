@@ -172,20 +172,21 @@ fn premise_sha256() {
 // ─── premises/recursion-depth.json ───────────────────────────────────────────
 
 /// The stack the depth probes run on, stated rather than inherited from the test
-/// harness. The reader descends once per level and refuses past 512 before it
-/// descends, so a document never overflows a stack that holds 512 levels; how
-/// large that stack is depends on the build. Measured on x86_64 (DECISIONS.md D8):
-/// 2 MiB holds it in a debug build (1 MiB does not), 384 KiB in a release build
-/// (256 KiB does not). The legs run debug, so they run on 2 MiB.
-const PROBE_STACK_BYTES: usize = 2 * 1024 * 1024;
+/// harness, and small: the reader and the canonical writer keep their nesting on
+/// the heap, so the native stack they use is the same at every depth, and the
+/// depths are read, refused and written back on a stack a microcontroller has.
+/// Measured on x86_64 (DECISIONS.md D10): both run in 8 KiB, debug and release.
+/// The leg runs debug under `cargo test` and release under `run.ps1`'s release leg.
+const PROBE_STACK_BYTES: usize = 64 * 1024;
 
 #[test]
 fn premise_recursion_depth() {
     let (doc, want) = family("recursion-depth.json", "premiseRecursionDepth");
-    let ran = std::thread::Builder::new()
+    let (ran, accepted) = std::thread::Builder::new()
         .stack_size(PROBE_STACK_BYTES)
         .spawn(move || {
             let mut ran = 0;
+            let mut accepted = Vec::new();
             for v in vectors(&doc) {
                 let (id, input, expected) = (s(v, "id"), get(v, "input"), get(v, "expected"));
                 let depth = n(input, "depth") as usize;
@@ -204,15 +205,20 @@ fn premise_recursion_depth() {
                             s(expected, "accepted"),
                             "{id}"
                         );
+                        accepted.push(value);
                     }
                     Err(r) => assert_eq!(refusal_class(&r), s(expected, "refused"), "{id}"),
                 }
                 ran += 1;
             }
-            ran
+            // Handed back rather than dropped here: a value's drop glue is the
+            // compiler's, recursive in the value's depth, and not the reader's
+            // (DECISIONS.md D10 measures it). The premise is the reader's.
+            (ran, accepted)
         })
         .expect("the probe thread starts")
         .join()
         .expect("the depth probes ran without exhausting the stack");
     assert_eq!(ran, want);
+    drop(accepted);
 }
