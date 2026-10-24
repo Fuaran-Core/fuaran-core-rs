@@ -1,5 +1,5 @@
 //! The skeleton ops and their apply — Core's tree-op contract over the
-//! [`Node`](crate::tree::Node) witness, with no domain policy: every node may hold
+//! [`Node`] witness, with no domain policy: every node may hold
 //! children, and a rejection names its class and the id it is about.
 //!
 //! | Op | Refused when, in this order |
@@ -260,6 +260,98 @@ fn apply_in_place(tree: &mut Node, op: &Op) -> Result<(), Rejection> {
             Ok(())
         }
     }
+}
+
+// ─── The footprint ───────────────────────────────────────────────────────────
+
+/// The read/write footprint of an op-script (twin of Core's `Footprint`), over
+/// node ids. Core's record also carries slot reads and writes; no skeleton op
+/// accesses a slot, so they are always empty here and are not carried.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Footprint {
+    /// Ids whose existence an op depends on.
+    pub reads: BTreeSet<String>,
+    /// Parents whose child list an op changes.
+    pub structure_writes: BTreeSet<String>,
+    /// Ids authored, destroyed, relocated or rewritten.
+    pub content_writes: BTreeSet<String>,
+    /// Ids removed, moved or rewritten under a parent the script cannot name.
+    pub unknown_parent_writes: BTreeSet<String>,
+}
+
+impl Footprint {
+    /// The union of two footprints (twin of `Footprint.union`).
+    pub fn union(mut self, other: Footprint) -> Footprint {
+        self.reads.extend(other.reads);
+        self.structure_writes.extend(other.structure_writes);
+        self.content_writes.extend(other.content_writes);
+        self.unknown_parent_writes
+            .extend(other.unknown_parent_writes);
+        self
+    }
+
+    /// Does the footprint change any child list, named or not?
+    pub(crate) fn writes_structure(&self) -> bool {
+        !self.structure_writes.is_empty() || !self.unknown_parent_writes.is_empty()
+    }
+}
+
+fn set_of<'a>(ids: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
+    ids.into_iter().map(str::to_string).collect()
+}
+
+fn footprint_of_op(op: &Op) -> Footprint {
+    match op {
+        Op::InsertChild { parent, node } => {
+            let inserted = set_of(node.ids());
+            let mut reads = inserted.clone();
+            reads.insert(parent.clone());
+            Footprint {
+                reads,
+                structure_writes: set_of([parent.as_str()]),
+                content_writes: inserted,
+                ..Footprint::default()
+            }
+        }
+        Op::RemoveNode { target } => Footprint {
+            reads: set_of([target.as_str()]),
+            content_writes: set_of([target.as_str()]),
+            unknown_parent_writes: set_of([target.as_str()]),
+            ..Footprint::default()
+        },
+        Op::MoveNode { target, new_parent } => Footprint {
+            reads: set_of([target.as_str(), new_parent.as_str()]),
+            structure_writes: set_of([new_parent.as_str()]),
+            content_writes: set_of([target.as_str()]),
+            unknown_parent_writes: set_of([target.as_str()]),
+        },
+        Op::ReorderChildren { parent, order } => {
+            let mut reads = set_of(order.iter().map(String::as_str));
+            reads.insert(parent.clone());
+            Footprint {
+                reads,
+                structure_writes: set_of([parent.as_str()]),
+                ..Footprint::default()
+            }
+        }
+        Op::Batch(inner) => footprint(inner),
+        Op::UpdateNode { node } => Footprint {
+            reads: set_of([node.id.as_str()]),
+            content_writes: set_of([node.id.as_str()]),
+            unknown_parent_writes: set_of([node.id.as_str()]),
+            ..Footprint::default()
+        },
+    }
+}
+
+/// The footprint of an op-script: the union of each op's (twin of
+/// `Ops.footprint Policy.none` over the plain scope). Conservative by contract: a
+/// remove, a move and an update carry an unknown-parent write, so each is
+/// dependent on every concurrent structural write.
+pub fn footprint(ops: &[Op]) -> Footprint {
+    ops.iter().fold(Footprint::default(), |acc, op| {
+        acc.union(footprint_of_op(op))
+    })
 }
 
 #[cfg(test)]

@@ -71,7 +71,8 @@ pub enum AppendFault {
 }
 
 impl AppendFault {
-    /// The fault's canonical bytes.
+    /// The fault's canonical bytes: `$type`, and the offending id as `parentId`
+    /// or `nodeId` (the reference exporter's `faultJ`).
     pub fn encode(&self) -> String {
         use crate::json::escape_string;
         match self {
@@ -85,7 +86,7 @@ impl AppendFault {
                 escape_string(p)
             ),
             AppendFault::ContentIdCollision(id) => format!(
-                "{{\"$type\":\"contentIdCollision\",\"id\":{}}}",
+                "{{\"$type\":\"contentIdCollision\",\"nodeId\":{}}}",
                 escape_string(id)
             ),
         }
@@ -234,12 +235,7 @@ impl<Op: DagOp> Dag<Op> {
         op: Op,
         heads: Vec<String>,
     ) -> Result<String, AppendFault> {
-        let mut parents: Vec<String> = Vec::new();
-        for h in heads {
-            if !parents.contains(&h) {
-                parents.push(h);
-            }
-        }
+        let mut parents: Vec<String> = dedup(&heads).into_iter().map(String::from).collect();
         parents.sort_by(|a, b| ordinal_cmp(a, b));
         self.append_on(actor, op, parents)
     }
@@ -261,8 +257,10 @@ impl<Op: DagOp> Dag<Op> {
         out
     }
 
-    /// The Kahn drain over the nodes `keep` admits: `(placed, unplaced)`.
-    fn drain(&self, keep: impl Fn(&str) -> bool) -> (Vec<String>, Vec<String>) {
+    /// The Kahn drain over the nodes `keep` admits, the ready node with the
+    /// smallest id (UTF-16 ordinal) first; a parent `keep` refuses constrains
+    /// nothing. `(placed, unplaced)`, the second in id order. Twin of `drainNodes`.
+    pub(crate) fn drain(&self, keep: impl Fn(&str) -> bool) -> (Vec<String>, Vec<String>) {
         let mut indeg: BTreeMap<&str, usize> = BTreeMap::new();
         let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for (id, n) in &self.nodes {
@@ -339,10 +337,14 @@ impl<Op: DagOp> Dag<Op> {
         Ok(ranks)
     }
 
-    /// `head` and every node it descends from.
-    fn closure(&self, head: &str) -> BTreeSet<String> {
+    /// The ancestor closure of `roots`: each root plus every transitive parent the
+    /// DAG holds; an id it does not hold contributes nothing. Twin of `closureOf`.
+    pub(crate) fn closure_of<'a>(
+        &'a self,
+        roots: impl IntoIterator<Item = &'a str>,
+    ) -> BTreeSet<String> {
         let mut seen: BTreeSet<String> = BTreeSet::new();
-        let mut stack: Vec<&str> = vec![head];
+        let mut stack: Vec<&str> = roots.into_iter().collect();
         while let Some(id) = stack.pop() {
             if seen.contains(id) {
                 continue;
@@ -355,7 +357,56 @@ impl<Op: DagOp> Dag<Op> {
         seen
     }
 
-    fn fold<S, R>(
+    /// `id` and every node it descends from; empty for an id the DAG does not
+    /// hold. Twin of `Dag.ancestorsOf`.
+    pub fn ancestors_of(&self, id: &str) -> BTreeSet<String> {
+        self.closure_of([id])
+    }
+
+    /// Of a non-empty down-closed set, the member with the largest ancestor
+    /// closure, the larger id (ordinal) on a tie (twin of `deepest`). Over an
+    /// acyclic set only a maximal member can win, so only those are sized.
+    fn deepest(&self, common: &BTreeSet<String>) -> Option<String> {
+        let candidates: BTreeSet<String> = if self.drain(|id| common.contains(id)).1.is_empty() {
+            let parents: Vec<&str> = common
+                .iter()
+                .filter_map(|id| self.get(id))
+                .flat_map(|n| n.parents.iter().map(String::as_str))
+                .collect();
+            let below = self.closure_of(parents);
+            common.difference(&below).cloned().collect()
+        } else {
+            common.clone()
+        };
+        candidates
+            .into_iter()
+            .map(|id| (self.ancestors_of(&id).len(), id))
+            .max_by(|(na, a), (nb, b)| na.cmp(nb).then_with(|| ordinal_cmp(a, b)))
+            .map(|(_, id)| id)
+    }
+
+    /// The common base of N heads: of the nodes in every head's ancestor closure,
+    /// the one with the largest closure, the larger id on a tie (twin of
+    /// `Dag.commonBase`). `None` for no heads, or when nothing is common to all. A
+    /// function of the head set; a head the DAG does not hold makes it `None`.
+    pub fn common_base(&self, heads: &[String]) -> Option<String> {
+        let distinct = dedup(heads);
+        let (first, rest) = distinct.split_first()?;
+        let mut common = self.ancestors_of(first);
+        for h in rest {
+            let c = self.ancestors_of(h);
+            common.retain(|id| c.contains(id));
+        }
+        if common.is_empty() {
+            None
+        } else {
+            self.deepest(&common)
+        }
+    }
+
+    /// Apply the ops of `order` (ids the DAG holds) from `state0`; the first
+    /// refusal is named by its node id. Twin of `fold`.
+    pub(crate) fn fold<S, R>(
         &self,
         state0: S,
         order: &[String],
@@ -379,7 +430,7 @@ impl<Op: DagOp> Dag<Op> {
         if !self.nodes.contains_key(head) {
             return Err(ReplayFault::UnknownHead(head.to_string()));
         }
-        let closure = self.closure(head);
+        let closure = self.ancestors_of(head);
         let order =
             Self::ordered(self.drain(|id| closure.contains(id))).map_err(ReplayFault::Cyclic)?;
         self.fold(state0, &order, &mut apply)
@@ -426,8 +477,32 @@ impl<Op: DagOp> Dag<Op> {
     }
 }
 
+/// `ids` with every repeat after the first dropped, in the order given.
+pub(crate) fn dedup(ids: &[String]) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    for h in ids {
+        if !out.contains(&h.as_str()) {
+            out.push(h);
+        }
+    }
+    out
+}
+
 fn sorted(ids: &[String]) -> Vec<&str> {
     let mut v: Vec<&str> = ids.iter().map(String::as_str).collect();
     v.sort_by(|a, b| ordinal_cmp(a, b));
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_collision_names_the_node_as_the_reference_does() {
+        assert_eq!(
+            AppendFault::ContentIdCollision("n1".into()).encode(),
+            "{\"$type\":\"contentIdCollision\",\"nodeId\":\"n1\"}"
+        );
+    }
 }

@@ -12,9 +12,9 @@
 //! the family has one), and fails on a vector it did not run, so a leg that
 //! silently ran nothing cannot pass.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+mod common;
 
+use common::*;
 use fuaran_core::chain::{self, Actor, Anchor, ChainRecord};
 use fuaran_core::dag::{Dag, DagNode, ReplayAllFault, ReplayFault};
 use fuaran_core::decimal;
@@ -25,97 +25,6 @@ use fuaran_core::json::{
 use fuaran_core::number::format_finite_double;
 use fuaran_core::ops::{self, Op};
 use fuaran_core::tree::Node;
-
-// ─── Locating Core ───────────────────────────────────────────────────────────
-
-fn is_core(dir: &Path) -> bool {
-    dir.join("conformance")
-        .join("apply")
-        .join("manifest.json")
-        .is_file()
-}
-
-fn core_dir() -> PathBuf {
-    if let Ok(d) = std::env::var("FUARAN_CORE_DIR") {
-        let d = PathBuf::from(d);
-        assert!(
-            is_core(&d),
-            "FUARAN_CORE_DIR={} is not a Core checkout (no conformance/apply/manifest.json)",
-            d.display()
-        );
-        return d;
-    }
-    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for dir in here.ancestors().skip(1) {
-        let candidate = dir.join("fuaran-core");
-        if is_core(&candidate) {
-            return candidate;
-        }
-    }
-    panic!(
-        "no Core checkout found: clone https://github.com/Fuaran-Core/fuaran-core beside this \
-         repository (as fuaran-core/), checked out at the commit core-pin.json names, or set \
-         FUARAN_CORE_DIR to one"
-    );
-}
-
-fn read(rel: &str) -> JVal {
-    let path = core_dir().join("conformance").join(rel);
-    let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    json::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()))
-}
-
-// ─── Reading the vector files ────────────────────────────────────────────────
-
-fn get<'a>(v: &'a JVal, k: &str) -> &'a JVal {
-    v.field(k)
-        .unwrap_or_else(|| panic!("missing member '{k}' in {}", render_canonical(v)))
-}
-
-fn s<'a>(v: &'a JVal, k: &str) -> &'a str {
-    match get(v, k) {
-        JVal::Str(x) => x,
-        other => panic!("'{k}' is not a string: {other:?}"),
-    }
-}
-
-fn n(v: &JVal, k: &str) -> f64 {
-    match get(v, k) {
-        JVal::Num(x) => *x,
-        other => panic!("'{k}' is not a number: {other:?}"),
-    }
-}
-
-fn arr<'a>(v: &'a JVal, k: &str) -> &'a [JVal] {
-    match get(v, k) {
-        JVal::Arr(x) => x,
-        other => panic!("'{k}' is not an array: {other:?}"),
-    }
-}
-
-fn str_items(v: &JVal, k: &str) -> Vec<String> {
-    arr(v, k)
-        .iter()
-        .map(|x| match x {
-            JVal::Str(s) => s.clone(),
-            other => panic!("not a string: {other:?}"),
-        })
-        .collect()
-}
-
-/// The family row's declared vector count in `<dir>/manifest.json`.
-fn declared(dir: &str, family: &str) -> usize {
-    let m = read(&format!("{dir}/manifest.json"));
-    let row = arr(&m, "families")
-        .iter()
-        .find(|f| s(f, "id") == family)
-        .unwrap_or_else(|| panic!("{dir}/manifest.json declares no {family}"));
-    n(row, "vectors") as usize
-}
-
-fn vectors(doc: &JVal) -> &[JVal] {
-    arr(doc, "vectors")
-}
 
 fn actor_of(text: &str) -> Actor {
     let v = json::parse(text).expect("an actor is JSON");
@@ -174,8 +83,8 @@ fn codec_refusals_json_vectors() {
         }
         ran += 1;
     }
-    // The column and profile vectors are the columnar codec's and the wire-profile
-    // reader's, which are not the spine's; the JSON rows are every one of the rest.
+    // The column vectors run in tests/columnar.rs (26) and the profile vectors in
+    // tests/propagation_forms.rs (19): the three legs are the family's 101.
     assert_eq!(ran, 56, "the json vectors run");
 }
 
@@ -325,8 +234,8 @@ fn decimal_law_vectors() {
             }
             "add" => decimal::add(s(input, "a"), s(input, "b")),
             "toFloat" => decimal::try_to_float(s(input, "text")).map(format_finite_double),
-            // The column codec and the aggregates are the columnar codec's and the
-            // evaluator's, which are not the spine's.
+            // The column codec and the aggregates run in tests/columnar.rs (22):
+            // the two legs are the family's 75.
             _ => continue,
         };
         let want = match (s(v, "case"), accept) {
@@ -344,6 +253,7 @@ fn decimal_law_vectors() {
         ran, 53,
         "the canonical, compare, add and toFloat vectors run"
     );
+    assert_eq!(vectors(&doc).len(), declared("laws", "decimal"));
 }
 
 // ─── escape/string-escape.json — the one string spelling ─────────────────────

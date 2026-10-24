@@ -142,9 +142,25 @@ impl Build for ValueBuild {
     }
 }
 
-/// Read JSON text under `limits` into the decode layer's value model.
+/// Read JSON text under `limits` into the decode layer's value model, keeping
+/// the reader's refusal whole, for a codec that projects it its own way.
+pub fn read_value(input: &str, limits: &JsonLimits) -> Result<Value, JsonRefusal> {
+    scan::<ValueBuild>(input, limits)
+}
+
+/// Read JSON text under `limits` into the decode layer's value model; a refusal
+/// is the decode contract's ([`DecodeError::of_refusal`]).
 pub fn parse(input: &str, limits: &JsonLimits) -> Result<Value, DecodeError> {
-    scan::<ValueBuild>(input, limits).map_err(DecodeError::of_refusal)
+    read_value(input, limits).map_err(DecodeError::of_refusal)
+}
+
+/// Values in single quotes, comma-separated, as a refusal sentence lists a
+/// closed set. Twin of `SeamCodec.quoteAll`.
+pub(crate) fn quote_all<S: AsRef<str>>(xs: &[S]) -> String {
+    xs.iter()
+        .map(|x| format!("'{}'", x.as_ref()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A value and the path that reached it. Every reading answers a [`DecodeError`]

@@ -1,8 +1,9 @@
 # fuaran-core-rs
 
 The Fuaran Core spine in Rust: canonical JSON with its proved grammar and parse limits,
-the number form, SHA-256 content addresses, tree and op apply, the op-stream chain and
-the DAG. It certifies against the conformance vectors the .NET reference
+the number form, SHA-256 content addresses, tree and op apply, the op-stream chain, the
+DAG with its reconcile and diff, and the columnar, capability, propagation and seam
+contracts. It answers every conformance family the .NET reference emits with a manifest (DECISIONS.md D8), and certifies against the conformance vectors the .NET reference
 ([fuaran-core](https://github.com/Fuaran-Core/fuaran-core)) emits.
 
 The crate is `no_std` + `alloc` by default, so it builds for microcontroller targets;
@@ -19,14 +20,21 @@ The crate is `no_std` + `alloc` by default, so it builds for microcontroller tar
 | `tree`, `ops` | the skeleton tree and the apply of its six ops |
 | `chain` | the op-stream chain over opaque payloads, and the actor |
 | `dag` | the content-addressed op-DAG: writes, heads, orders, ranks, replays and the integrity walk |
+| `merge`, `diff` | the common base and the N-lane reconcile under the ops' footprint, and the content-aware tree diff with its classification |
+| `hash` | the FNV-1a fingerprint over UTF-16 code units, and the injective field encoding |
+| `column`, `field`, `unit` | the columnar `DataSource` codec, its refusals and the pinned aggregates; the schema field, its diff, fingerprint and delta; the unit of measure's parser and canonical text |
+| `propagation` | the evaluation order and its cycles, the dirty set of a change, and the incremental evaluation |
+| `capability`, `seam` | the invocable-capability contract (argument validation, the invocation key, the declaration codec, the registry); the seams' refusal and declaration documents, read by one declaration-driven codec |
+| `canonical_form`, `profile` | an IDL vocabulary's canonical form (aliases, presence, defaults); the wire profile `<name>@<major>.<minor>` |
 
 ## Conformance
 
-`tests/conformance.rs` certifies the crate against the vectors the reference emits, read from a
+`tests/` certifies the crate against the vectors the reference emits, one file per group of families, read from a
 checkout of [fuaran-core](https://github.com/Fuaran-Core/fuaran-core) at the commit `core-pin.json`
 names: clone it beside this repository as `fuaran-core/` (or set `FUARAN_CORE_DIR`). The legs fail
-when no checkout is found. Which vectors are run, and which are not the spine's, is
-[DECISIONS.md](DECISIONS.md) D6.
+when no checkout is found. Which families are run, with each leg's count, is
+[DECISIONS.md](DECISIONS.md) D8 (D6 recorded the first certification); the counts themselves are the spine's
+adoption record in each of the reference's family manifests.
 
 ## Build
 

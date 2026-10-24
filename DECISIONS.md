@@ -59,6 +59,10 @@ layer (`decode::Value`) refuses a null as `NullNotRepresentable`, as the referen
 
 ## D6 — 2026-10-23 — what the first certification covers
 
+*Superseded in part by D8 (2026-10-24):* the table below is Phase 463's first certification as it stood. What the
+spine runs now, and every count, is D8 and the spine's adoption record in each of the reference's family manifests
+(`fuaran-core-rs`); this entry holds no current count.
+
 Certified against the reference's vectors (`tests/conformance.rs`), every vector of each set named:
 
 | Family | Run | Not run, and why |
@@ -103,3 +107,44 @@ The verdict, with the measurements behind it in [verification/README.md](verific
 What would change the reader's verdict is a reader restructured for checking (one arena, no
 reallocation on the parse path) or a proof-carrying extraction from the reference's F\*; neither is
 this phase's, and both are named under the write-up's `SUCCESSOR`.
+
+## D8 — 2026-10-24 — the spine answers every family the reference emits, and where its counts live
+
+Phase 564 extends the certification from five families to every family the reference emits under
+`conformance/`, at the Core commit `core-pin.json` names. The counts are the reference's to record: each family's
+manifest carries the spine's adoption record (`fuaran-core-rs`), the law families' in their own index
+(`conformance/laws/manifest.json`, the reference's D230), so neither this entry nor D6 holds a count a manifest
+does not. Each leg asserts the count its manifest declares and fails on a vector it did not run.
+
+| Leg (`tests/`) | Families | What answers them |
+|---|---|---|
+| `conformance.rs` | `decodeRejects`, `skeletonApply`, `skeletonChain`, `skeletonDag`; the `json` vectors of `codecRefusals`; the `canonical`, `compare`, `add` and `toFloat` vectors of `decimal`; the `escape/` lines | `json`, `decode`, `decimal`, `tree`, `ops`, `chain`, `dag` |
+| `structural.rs` | `skeletonMerge`, `skeletonDiff` | `merge` (the common base and `reconcile_many` under `ops::footprint`), `diff` |
+| `columnar.rs` | the `column` vectors of `codecRefusals`; the `codecDecode`, `codecEncode` and `aggregate` vectors of `decimal`; `fieldLaws` | `column`, `field`, `unit` |
+| `propagation_forms.rs` | `propagationLaws`, `canonicalFormLaws`; the `profile` vectors of `codecRefusals` | `propagation`, `canonical_form`, `profile` |
+| `capability.rs` | `capabilityLaws` | `capability`, `hash` |
+| `seams.rs` | `seamRefusals` | `seam` |
+| `premises.rs` | `premiseStringModel`, `premiseFloatDigits`, `premiseInt53`, `premiseSha256`, `premiseRecursionDepth` | `json`, `decode`, `number`, `sha256` |
+
+Three rulings sit inside it.
+
+- **Every reader is `no_std`.** Nothing new is behind `std`: where `core` lacks a float function the vectors
+  need bit-exact (`sqrt` for the aggregates' standard deviation, the whole-number test), the crate carries a
+  correctly rounded private one. The build for `thumbv7em-none-eabihf` is part of `run.ps1`.
+- **The seams are read by one declaration-driven codec**, the twin of how the reference derives a codec per seam
+  union from its IDL declaration: the unions, records and enums are tables, and one interpreter reads, refuses and
+  re-encodes them, strict or lenient. Thirteen hand-written readers would restate the tables. A typed Rust value
+  per seam union is not offered until a consumer needs one.
+- **The recursion premise is answered on a stated stack, and that stack is large.** The reader recurses once per
+  nesting level and refuses past 512 before it descends, so it never overflows a stack that holds 512 levels; the
+  probe leg runs on a 2 MiB thread. Measured on x86_64: a debug build needs more than 1 MiB for the 512-deep
+  documents and a release build more than 256 KiB (384 KiB holds it). That is above a microcontroller's stack,
+  so on such a target the premise holds only under a lower depth bound (`JsonLimits::depth_only`), which the
+  reference's 512 does not admit. Closing it is a reader that keeps its own stack on the heap, the restructuring
+  D7 names for the model checker as well; it is not this entry's.
+
+*Declined:* the `encoding/` table. It has no manifest, so no adoption record could hold a count, and what it
+pins beyond the canonical escapes the `escape/` lines already pin is the v1 profile (the rendering of stores
+minted by the reference's `0.30.0` to `0.32.0`) and a writer that keeps authored member order. The spine holds
+neither, because it has never read or minted such a store. A host that must open one needs both, with the table
+as its certification.
