@@ -38,6 +38,8 @@ use core::marker::PhantomData;
 use crate::number::format_number;
 use crate::prelude::*;
 
+mod escape;
+
 /// A parsed JSON value. `Obj` keeps parse order (a reader looks members up by
 /// name; [`render_canonical`] re-sorts on emit). A repeated member name never
 /// reaches this type: row 1 refuses it at the reader.
@@ -835,25 +837,18 @@ pub fn read(input: &str, limits: &JsonLimits) -> Result<JVal, JsonRefusal> {
 /// Quote and escape a string the one canonical way: `"` and `\` escaped, every
 /// control character U+0000–U+001F as a lower-case `\u00xx` with no short form,
 /// and nothing else — `/` and non-ASCII pass through literally.
+///
+/// The work is [`escape::escape_bytes`] over the string's UTF-8 bytes, the function
+/// the Creusot proof checks (`verification/README.md`). The text it returns is
+/// valid UTF-8 by construction rather than by proof: the escape replaces only ASCII
+/// bytes, each with ASCII ones, and copies every other byte in order. The check below
+/// is one pass the crate keeps in place of an `unsafe` conversion it nowhere else
+/// needs, and its failing arm is unreachable.
 pub fn escape_string(s: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if (c as u32) < 0x20 => {
-                let u = c as u32 as usize;
-                out.push_str("\\u00");
-                out.push(HEX[u >> 4] as char);
-                out.push(HEX[u & 0x0f] as char);
-            }
-            c => out.push(c),
-        }
+    match String::from_utf8(escape::escape_bytes(s.as_bytes())) {
+        Ok(quoted) => quoted,
+        Err(_) => unreachable!("the canonical escape of UTF-8 text is UTF-8 text"),
     }
-    out.push('"');
-    out
 }
 
 /// Ordinal comparison on UTF-16 code units — the reference's `StringComparer.Ordinal`,

@@ -148,3 +148,28 @@ pins beyond the canonical escapes the `escape/` lines already pin is the v1 prof
 minted by the reference's `0.30.0` to `0.32.0`) and a writer that keeps authored member order. The spine holds
 neither, because it has never read or minted such a store. A host that must open one needs both, with the table
 as its certification.
+
+## D9 — 2026-10-24 — the proved escape is the crate's own function, and the reference records the proof
+
+Phase 566 closes the first gap D7 states and makes the proof something the reference can count:
+
+- **The proof checks the crate's function.** `escape_bytes` lives in the crate, in `src/json/escape.rs`, and
+  `json::escape_string` is that function over its argument's UTF-8 bytes. The Creusot crate compiles that file as
+  one of its own modules, with the specification attached under `cfg(creusot)`, so no build but Creusot's sees it
+  and the crate still takes no dependency (D2). The file is separate because the proof crate must compile all of it
+  and Creusot cannot compile the reader. The transliteration gap (D7) stands, and is stated on the reference's row.
+- **No `unsafe` to save a pass.** The escaped bytes become a `String` through the checked `String::from_utf8`. They
+  are well-formed by construction, and an `unsafe` conversion would make the crate's memory safety rest on an
+  argument no tool checks; the crate holds no `unsafe` today. The cost is one validation pass per escaped string,
+  and one stub: the two closing Kani rungs replace that conversion with the unchecked one, because its loop over
+  one symbolic byte exhausts the memory on its own (measured, `verification/README.md`).
+- **The reference records the proof; this repository computes its identity.** The reference's claims ladder holds
+  a row for this proof (`spine-escape-quoted`), naming the toolchain identity and the replay identity — the SHA-256
+  of the record's manifest, which `verification/creusot/replay-identity.ps1` defines and `run.ps1 -Verify` prints —
+  and a host-compliance declaration cites the row as `proof-replayed` evidence (the reference's D233). The
+  reference cannot run the prover, so what it validates is that the row is this host's proof and that the
+  declaration names the toolchain and the identity the row records. A change to the proof's files moves the
+  identity, and the row is re-recorded in the reference in the change that lands the new proof.
+- **The proofs run in CI on demand only.** `.github/workflows/verify.yml` runs `run.ps1 -Verify` on
+  `workflow_dispatch`, never on a push: building the two images costs the better part of an hour for a replay that
+  takes a second.

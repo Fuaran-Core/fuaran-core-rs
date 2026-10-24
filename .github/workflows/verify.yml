@@ -1,0 +1,25 @@
+# The machine-checked proofs (verification/README.md): the Kani harnesses and the Creusot replay, each in
+# the image built from its pinned Dockerfile, then the replay record's identity. On demand only: this
+# workflow has no push or pull-request trigger, because building the two images costs the better part of
+# an hour and the replay it ends in takes a second. The ordinary gate is `run.ps1` without `-Verify`.
+name: verify
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proofs:
+    name: run.ps1 -Verify in the pinned images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      # cargo and docker come with the runner image; neither checker is on PATH, so run.ps1 builds each
+      # image from its Dockerfile and runs the leg inside it. The proofs read nothing from a Core checkout,
+      # so the conformance tests and the other stages are skipped here, and run in the ordinary gate.
+      - name: Kani harnesses and Creusot replay
+        shell: pwsh
+        run: ./run.ps1 -SkipFormat -SkipBuild -SkipTests -SkipEmbedded -Verify

@@ -7,8 +7,8 @@ named reason when neither is available. A proof that runs and does not check fai
 
 | Leg | What is proved | Checker | Cost to check |
 |---|---|---|---|
-| `creusot/escape` | the canonical escape, byte for byte, returns exactly the reference proof's `quoted` of its input | Creusot 0.9.0 · Why3 1.8.2 · cvc5 1.3.1, cvc4 1.8, Z3 4.8.12, Alt-Ergo 2.6.2 | replay 2 s; fresh search 1 min 22 s |
-| `kani` | `escape_string` on the empty string and on every one-byte ASCII string returns, quoted, exactly as long as rule 6 says | Kani 0.68.0 · CBMC 6.11.0 | 13 s + 6 s |
+| `creusot/escape` | the crate's own `json::escape::escape_bytes`, the loop `escape_string` runs, returns exactly the reference proof's `quoted` of its input | Creusot 0.9.0 · Why3 1.8.2 · cvc5 1.3.1, cvc4 1.8, Z3 4.8.12, Alt-Ergo 2.6.2 | replay 1 s; a fresh search was 1 min 22 s on 16 cores (Phase 486, not re-measured) |
+| `kani` | `escape_string` on the empty string and on every one-byte ASCII string returns, quoted, exactly as long as rule 6 says (its UTF-8 check stubbed, below) | Kani 0.68.0 · CBMC 6.11.0 | 0.5 s + 2.1 s |
 | `kani` (feature `frontier`) | the escape on two and three symbolic bytes; the limited reader: panic-freedom, every bound honoured, a stated allocation ceiling | Kani 0.68.0 · CBMC 6.11.0 | **does not close** on 16 GB; the measurements are below |
 
 This directory is the outcome of Phase 486, an exploration whose question was whether the
@@ -21,31 +21,56 @@ stands, and the reason is measured rather than guessed.
 **Claim.** `escape_bytes(s) == quoted(s)` for every byte string `s`, where `quoted`, `escape`
 and `esc_ch` are Pearlite logic functions written clause for clause from the reference proof's
 `quoted` / `escape` / `esc_ch` (`proofs/WireCanon.fst` in the Core repository), over UTF-8
-bytes in place of the F\* model's abstract alphabet. `escape_bytes` is `json::escape_string`'s
-loop, byte for byte, over the UTF-8 encoding of its argument. Rule 6 escapes only ASCII — `"`,
-`\` and U+0000–U+001F, each one UTF-8 byte that never continues a sequence — so the escape of a
-string's bytes is the UTF-8 encoding of the escape of its characters, and the byte-level claim
-is the character-level one.
+bytes in place of the F\* model's abstract alphabet. `escape_bytes` is the crate's own function
+(`src/json/escape.rs`), and `json::escape_string` is that function over the UTF-8 encoding of its
+argument. Rule 6 escapes only ASCII — `"`, `\` and U+0000–U+001F, each one UTF-8 byte that never
+continues a sequence — so the escape of a string's bytes is the UTF-8 encoding of the escape of
+its characters, and the byte-level claim is the character-level one.
 
-**What was checked.** 37 goals, all closed: `escape_bytes` (24: the loop invariant's entry and
-preservation, every bounds and overflow check, the postcondition), `escape_push_back` (10: the
-induction that escaping one more byte appends that byte's escape — the same induction
-`read_str_inverts_escape` runs in the F\* proof), `concat_laws`, `escape` and `hex_digit`. The
-record of which prover closed which goal is `creusot/escape/verif/**/proof.json`, which
-`cargo creusot prove --replay` replays in about 2 seconds; a fresh search (`cargo creusot
-prove`) takes 1 min 22 s wall on 16 cores. Total prover time across the goals is 7.1 s.
+**How the proof reaches the crate's function.** The proof crate (`creusot/escape/`) compiles
+`src/json/escape.rs` as one of its own modules (`#[path]`), so the lines it checks are the lines
+the spine builds. The specification sits on those lines under `cfg(creusot)` — an `ensures` on
+`escape_bytes`, a `requires`/`ensures` on `hex_digit`, the loop's two invariants and its
+`proof_assert!` steps — which only the Creusot build sets: every other build of the crate sees
+none of it and takes no dependency. The logic functions and the lemmas stay in the proof crate.
+The file holds `escape_bytes` and nothing else the proof would have to consume, because Creusot
+cannot compile the rest of `src/json.rs` (the reader's generic `Parser<B: Build>`; see the
+verdict below).
+
+**What was checked.** 42 goals, all closed: `escape_bytes` (29: the loop invariant's entry and
+preservation, every bounds and overflow check, the capacity computation, the postcondition),
+`escape_push_back` (10: the induction that escaping one more byte appends that byte's escape —
+the same induction `read_str_inverts_escape` runs in the F\* proof), `concat_laws`, `escape` and
+`hex_digit`. The record of which prover closed which goal is `creusot/escape/verif/**/proof.json`,
+which `cargo creusot prove --replay` replays in about a second; a fresh search (`cargo creusot
+prove`) rewrites it. Changing the crate's function breaks the replay: a planted upper-case hex
+digit in `hex_digit` fails `spine_escape.hex_digit` with `1 unproved file`.
 
 **What it does not prove.** Two gaps, both stated here so nobody reads more into the claim:
 
-1. **It is a twin, not the crate's function.** Creusot consumes neither the spine crate nor
-   `str::chars`, so `escape_bytes` re-states `escape_string`'s loop over `&[u8]` rather than
-   calling it. The two are kept in step by eye (the loop is nine lines) and by the conformance
-   vectors `escape_string` certifies against. A later step could close this by extracting
-   `escape_bytes` into the crate and making `escape_string` call it.
-2. **Agreement with the F\* model is by transliteration.** The Pearlite `esc_ch` / `escape` /
+1. **Agreement with the F\* model is by transliteration.** The Pearlite `esc_ch` / `escape` /
    `quoted` mirror the F\* definitions clause for clause, but no tool checks that mirror; the
    alphabets differ (`u8` here, the abstract `ch` there), so a mechanical bridge would be a
    proof of its own.
+2. **That `escape_string` returns well-formed text is not proved.** The escape replaces only
+   ASCII bytes, each with ASCII ones, and copies every other byte in order, so UTF-8 in is UTF-8
+   out; `escape_string` converts through the checked `String::from_utf8` rather than an `unsafe`
+   conversion (the crate holds no `unsafe`), and that check's failing arm is unreachable by the
+   argument, not by a proof.
+
+**The replay identity.** The reference's claims ladder records this proof as a row of its own,
+and a host-compliance declaration cites that row with the toolchain and the replay identity the
+row records (Core's `docs/host-compliance.md`, class `proof-replayed`). The identity is
+`sha256:` and the SHA-256 of a manifest with one line per file of the record — the proved
+function `src/json/escape.rs`, its specification `creusot/escape/src/lib.rs`, and every
+`creusot/escape/verif/**/proof.json` — in ordinal order of the repository-relative path, each
+line `<SHA-256 of the file, lower-case hex>  <path>` and a newline: what GNU `sha256sum` prints.
+`creusot/replay-identity.ps1` computes it, and `run.ps1 -Verify` prints it. Any change to one of
+those files moves it, so a row recorded against one tree does not answer for another. The
+toolchain identity is `creusot@0.9.0 why3@1.8.2 cvc5@1.3.1 cvc4@1.8 z3@4.8.12 alt-ergo@2.6.2`,
+the versions `creusot/Dockerfile` pins and the image runs. (The record labels some goals
+`z3@4.15.3`, the version in why3find's calibration profile, `why3find.json`; the binary the image
+runs and the replay uses is Debian's 4.8.12.)
 
 **Cost.** Toolchain: about 25 minutes and three attempts in a fresh `rust:1-bookworm`
 container — the opam switch refused to build `why3-ide`'s GTK dependencies until they were
@@ -121,8 +146,14 @@ the growth path through `alloc::raw_vec` (every `assume(false)` abort path in CB
 every index then carries.
 
 **What closes.** `escape_len0` and `escape_len1`: `escape_string` on the empty string and on
-every one-byte ASCII string returns, is quoted, and is exactly as long as rule 6 says — 13 s and
-6 s. Thin, and stated as such; it is what a 16 GB machine proves of this crate with Kani.
+every one-byte ASCII string returns, is quoted, and is exactly as long as rule 6 says — 0.5 s and
+2.1 s of verification time. Thin, and stated as such; it is what a 16 GB machine proves of this
+crate with Kani. Since `escape_string` converts the bytes `escape_bytes` returns through the
+checked `String::from_utf8`, the two rungs stub that conversion with the unchecked one
+(`from_utf8_valid`): the validation's loop over one symbolic byte, measured, exhausts the memory on
+its own (the rung's unwinding assertion fails at the default bound, and at a bound of 10 CBMC runs
+out of memory), and the well-formedness it checks is the escape's argument, stated under the
+Creusot leg's gaps, not these rungs' claim.
 
 **Verdict: do not adopt for the reader; keep what closes.** The reader rungs and the longer
 escape rungs stay in the tree behind the `frontier` feature, with this table, so the next attempt — a bigger machine, a
@@ -149,13 +180,16 @@ docker run --rm -v ${PWD}:/src fuaran-core-verify-creusot bash -c "cd /src/verif
 `cargo creusot prove` without `--replay` searches afresh and rewrites `verif/**/proof.json`;
 commit the result when the proof changes.
 
-## SUCCESSOR
+## Where the escape proof is recorded
 
-Follow-ups this exploration names and does not file:
+The reference's claims ladder (Core's `proofs.json`) carries the escape proof as the row
+`spine-escape-quoted`, which names this repository, the proved function, the toolchain identity,
+the replay identity and the commit it was recorded at, with the transliteration gap on its
+boundary. A host-compliance declaration for this repository cites it as `proof-replayed`
+evidence on that row, and the reference's validator checks the citation: the row is this host's
+proof, and the toolchain and replay identity the declaration names are the ones the row records.
+It does not run the prover; this leg does. A change to the proof's files moves the replay identity,
+and the row is re-recorded in the reference in the change that lands the new proof.
 
-- A proof-sourced evidence class in the host-compliance schema (Core Phase 484's), so a
-  Creusot replay can stand as evidence beside a conformance run.
-- A ladder row for the Rust spine's escape in Core's proof ladder, citing `creusot/escape`.
-- A CI leg (`workflow_dispatch`, not on push) running `run.ps1 -Verify` in the two images.
-- Extracting `escape_bytes` into the crate so `escape_string` calls the proved loop, closing
-  the twin gap above.
+`.github/workflows/verify.yml` runs `run.ps1 -Verify` on demand (`workflow_dispatch`, never on a
+push), building the two pinned images on the runner.

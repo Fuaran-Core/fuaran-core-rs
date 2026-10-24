@@ -4,15 +4,21 @@
 //! repository) models the escape as three functions over an abstract alphabet:
 //! `esc_ch` (one character's escape), `escape` (every character's, in order) and
 //! `quoted` (the escape between two quotes). The logic functions below state the
-//! same three over UTF-8 bytes, clause for clause, and [`escape_bytes`] — the
-//! spine's `json::escape_string`, byte for byte, over the UTF-8 encoding of its
-//! argument — is proved to return exactly `quoted` of its input.
+//! same three over UTF-8 bytes, clause for clause, and the spine's own
+//! `escape_bytes` (`src/json/escape.rs`, the loop `json::escape_string` runs over
+//! the UTF-8 encoding of its argument) is proved to return exactly `quoted` of its
+//! input.
+//!
+//! The proof is about the crate's function, not a copy of it: [`spine_escape`] is
+//! that file, compiled here as a module of this crate, where `cfg(creusot)` attaches
+//! its specification and its loop's proof steps.
 //!
 //! Bytes rather than characters because rule 6 escapes only ASCII (`"`, `\` and
 //! U+0000–U+001F), each a single UTF-8 byte that never continues a sequence, so the
 //! escape of a string's bytes IS the UTF-8 encoding of the escape of its characters.
 //! See `../../README.md` for what this proves, at what cost, and what it does not.
 
+extern crate alloc;
 extern crate creusot_std;
 
 use creusot_std::prelude::*;
@@ -132,68 +138,8 @@ pub fn quoted(s: Seq<u8>) -> Seq<u8> {
     pearlite! { Seq::singleton(0x22u8).concat(escape(s)).push_back(0x22u8) }
 }
 
-/// The ASCII byte of a nibble's lower-case hex digit.
-#[requires(n@ < 16)]
-#[ensures(result == hex_lo(n@))]
-fn hex_digit(n: u8) -> u8 {
-    if n < 10 { b'0' + n } else { b'a' + (n - 10) }
-}
-
-/// Quote and escape the UTF-8 bytes of a string the one canonical way. This is
-/// `json::escape_string`'s loop, byte for byte, and it returns exactly the
-/// reference model's `quoted` of its input.
-#[ensures(result@ == quoted(s@))]
-pub fn escape_bytes(s: &[u8]) -> Vec<u8> {
-    let mut out: Vec<u8> = Vec::new();
-    out.push(b'"');
-    let _ = snapshot! { concat_laws::<u8>() };
-    proof_assert! { out@.ext_eq(Seq::singleton(0x22u8).concat(escape(s@.subsequence(0, 0)))) };
-    let mut i: usize = 0;
-    #[invariant(i@ <= s@.len())]
-    #[invariant(out@ == Seq::singleton(0x22u8).concat(escape(s@.subsequence(0, i@))))]
-    while i < s.len() {
-        let b = s[i];
-        // The step: the escape of one more byte is the escape so far, then that
-        // byte's own ([`escape_push_back`], over the prefix read so far).
-        let prefix = snapshot! { s@.subsequence(0, i@) };
-        let _ = snapshot! { concat_laws::<u8>() };
-        let _ = snapshot! { escape_push_back(*prefix, b) };
-        proof_assert! { s@.subsequence(0, i@ + 1).ext_eq(prefix.push_back(b)) };
-        proof_assert! { escape(s@.subsequence(0, i@ + 1)) == escape(*prefix).concat(esc_ch(b)) };
-        // An `if` chain where the spine's writer matches: Creusot 0.9.0 gives a
-        // `match` arm's default branch none of the earlier arms' negations, so the
-        // last arm could not be shown to be the verbatim case (see ../../README.md).
-        if b == b'"' {
-            proof_assert! { esc_ch(b) == Seq::singleton(0x5Cu8).push_back(0x22u8) };
-            out.push(b'\\');
-            out.push(b'"');
-        } else if b == b'\\' {
-            proof_assert! { esc_ch(b) == Seq::singleton(0x5Cu8).push_back(0x5Cu8) };
-            out.push(b'\\');
-            out.push(b'\\');
-        } else if b < 0x20 {
-            proof_assert! {
-                esc_ch(b) == Seq::singleton(0x5Cu8)
-                    .push_back(0x75u8)
-                    .push_back(0x30u8)
-                    .push_back(0x30u8)
-                    .push_back(hex_lo(b@ / 16))
-                    .push_back(hex_lo(b@ % 16))
-            };
-            out.push(b'\\');
-            out.push(b'u');
-            out.push(b'0');
-            out.push(b'0');
-            out.push(hex_digit(b / 16));
-            out.push(hex_digit(b % 16));
-        } else {
-            proof_assert! { esc_ch(b) == Seq::singleton(b) };
-            out.push(b);
-        }
-        proof_assert! { out@ == Seq::singleton(0x22u8).concat(escape(s@.subsequence(0, i@ + 1))) };
-        i += 1;
-    }
-    proof_assert! { s@.subsequence(0, s@.len()).ext_eq(s@) };
-    out.push(b'"');
-    out
-}
+/// The spine's escape, exactly as the crate compiles it (`src/json/escape.rs`). Its
+/// `escape_bytes` carries `#[ensures(result@ == quoted(s@))]` under `cfg(creusot)`.
+#[path = "../../../../src/json/escape.rs"]
+#[allow(dead_code)]
+mod spine_escape;

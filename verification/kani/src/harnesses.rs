@@ -37,10 +37,23 @@ fn escape_within_rule_6<const M: usize>() {
     assert!(out.len() == expected + 2);
 }
 
+/// `String::from_utf8` with its validation taken as passing. `escape_string` turns
+/// the bytes `escape_bytes` returns into a `String` through the checked conversion
+/// (the crate holds no `unsafe`), and that check's loop over a symbolic byte runs the
+/// checker out of memory on its own (`../README.md`). The escape's output IS valid
+/// UTF-8 when its input is, because it replaces only ASCII bytes, each with ASCII
+/// ones; that is the Creusot proof's to state, not these rungs'. What they still
+/// check is that `escape_string` returns, quoted, exactly as long as rule 6 says.
+#[allow(dead_code)] // reached only as a stub
+fn from_utf8_valid(v: Vec<u8>) -> Result<String, std::string::FromUtf8Error> {
+    Ok(unsafe { String::from_utf8_unchecked(v) })
+}
+
 macro_rules! escape_rung {
     ($($name:ident = $n:literal unwind $unwind:literal;)*) => {$(
         #[kani::proof]
         #[kani::unwind($unwind)]
+        #[kani::stub(alloc::string::String::from_utf8, from_utf8_valid)]
         fn $name() {
             escape_within_rule_6::<$n>();
         }

@@ -6,6 +6,6 @@
     { "prover": "cvc4@1.8", "size": 40, "time": 0.506 }
   ],
   "proofs": {
-    "Coma": { "vc_hex_digit": { "prover": "cvc4@1.8", "time": 0.023 } }
+    "Coma": { "vc_hex_digit": { "prover": "cvc4@1.8", "time": 0.113 } }
   }
 }

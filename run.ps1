@@ -11,7 +11,8 @@
 # The no_std build is part of the contract, so a missing target FAILS here, naming the remedy;
 # -SkipEmbedded is the deliberate opt-out.
 #
-# -Verify runs the proofs (verification/README.md): the Kani harnesses and the Creusot replay. Each
+# -Verify runs the proofs (verification/README.md): the Kani harnesses and the Creusot replay, then prints the
+# replay record's identity. Each
 # tool runs natively when it is on PATH, else in Docker from the Dockerfile beside it (built once);
 # with neither, the leg SKIPS and names the reason. A proof that runs and does not check FAILS.
 # Switches: -SkipFormat / -SkipBuild / -SkipTests / -SkipEmbedded for fast iteration.
@@ -112,6 +113,10 @@ if ($Verify) {
             -Native { & $cargo creusot; if ($LASTEXITCODE -eq 0) { & $cargo creusot prove --replay } } `
             -InContainer "cd /src/verification/creusot/escape && cargo creusot && cargo creusot prove --replay"
     }
+    # The identity of the replay record, which the reference's claims ladder records on this proof's row and a
+    # host-compliance declaration names (verification/README.md, "The replay identity"). It is a property of
+    # the files, printed whether or not the leg above ran.
+    Write-Host "creusot/escape replay identity: $(& pwsh -NoProfile -File verification/creusot/replay-identity.ps1)"
 }
 
 Write-Host "fuaran-core-rs: green"
