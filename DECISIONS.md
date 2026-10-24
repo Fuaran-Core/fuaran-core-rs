@@ -113,7 +113,7 @@ this phase's, and both are named under the write-up's `SUCCESSOR`.
 Phase 564 extends the certification from five families to every family the reference emits under
 `conformance/`, at the Core commit `core-pin.json` names. The counts are the reference's to record: each family's
 manifest carries the spine's adoption record (`fuaran-core-rs`), the law families' in their own index
-(`conformance/laws/manifest.json`, the reference's D230), so neither this entry nor D6 holds a count a manifest
+(`conformance/laws/manifest.json`, the reference's D231), so neither this entry nor D6 holds a count a manifest
 does not. Each leg asserts the count its manifest declares and fails on a vector it did not run.
 
 | Leg (`tests/`) | Families | What answers them |
