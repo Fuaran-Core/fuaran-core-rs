@@ -21,13 +21,14 @@
 //! hands an admitted invocation to the host's performer and runs nothing else.
 
 use crate::decode::{self, Cursor, DecodeCode, DecodeError, quote_all};
-use crate::hash::{canonical_fields, keyed_by};
+use crate::hash::{FOLD_SEP, FieldBody, keyed_by_preimage, write_canonical_field};
 use crate::json::{JVal, JsonLimits, ordinal_cmp, render_canonical};
-use crate::number::format_finite_double;
+use crate::number::write_finite_double;
 use crate::prelude::*;
 use crate::seam::{self, Reading, Slot};
-use alloc::borrow::Cow;
 use alloc::sync::Arc;
+use core::cmp::Ordering;
+use core::fmt::{self, Write};
 
 // ─── The effect class ────────────────────────────────────────────────────────
 
@@ -268,37 +269,74 @@ fn utf16_len(s: &str) -> i64 {
     s.encode_utf16().count() as i64
 }
 
+/// The canonical spelling of a value in a space that respells it: an integer
+/// in its shortest decimal form, a number in the canonical number form. Written
+/// through `core::fmt`, so a value is spelled where it is written and never
+/// built first (DECISIONS.md D12).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Respelled {
+    Int(i32),
+    Num(f64),
+}
+
+impl core::fmt::Display for Respelled {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Respelled::Int(v) => write!(f, "{v}"),
+            Respelled::Num(v) => write_finite_double(*v, f),
+        }
+    }
+}
+
 impl ValueSpace {
+    /// The value an integer or number space reads `s` as, where `s` lies in it:
+    /// the one place a numeric value is read, checked against its bounds and
+    /// spelled. `None` for every other space, and for a value outside the space.
+    fn respelled(&self, s: &str) -> Option<Respelled> {
+        match self {
+            ValueSpace::IntRange(lo, hi) => read_int(s)
+                .filter(|v| v >= lo && v <= hi)
+                .map(Respelled::Int),
+            ValueSpace::FloatRange(lo, hi) => read_float(s)
+                .filter(|v| v >= lo && v <= hi)
+                .map(Respelled::Num),
+            _ => None,
+        }
+    }
+
     /// The one spelling a value in the space is handed on as, or `None` where the
     /// string is not in the space: an integer in its shortest decimal form, a
     /// number in the canonical number form, every other value as sent. Twin of
     /// `Space.canonical`.
     pub fn canonical(&self, s: &str) -> Option<String> {
         match self {
-            ValueSpace::IntRange(lo, hi) => read_int(s)
-                .filter(|v| v >= lo && v <= hi)
-                .map(|v| v.to_string()),
-            ValueSpace::FloatRange(lo, hi) => read_float(s)
-                .filter(|v| v >= lo && v <= hi)
-                .map(format_finite_double),
-            ValueSpace::StringLen(lo, hi) => {
-                let len = utf16_len(s);
-                (len >= i64::from(*lo) && len <= i64::from(*hi)).then(|| s.to_string())
+            ValueSpace::IntRange(..) | ValueSpace::FloatRange(..) => {
+                self.respelled(s).map(|r| r.to_string())
             }
-            ValueSpace::Enum(xs) => xs.iter().any(|x| x == s).then(|| s.to_string()),
-            ValueSpace::AnyString => Some(s.to_string()),
-            ValueSpace::SlotTree(c) => match (slot_kind_of(s), c) {
-                (None, _) => None,
-                (Some(_), None) => Some(s.to_string()),
-                (Some(k), Some(c)) => (&k == c).then(|| s.to_string()),
-            },
+            _ => self.validate(s).then(|| s.to_string()),
         }
     }
 
-    /// Is the value in the space — exactly when it has a canonical spelling there.
-    /// Twin of `Space.validate`.
+    /// Is the value in the space — exactly when it has a canonical spelling there
+    /// — decided on the value, without spelling it: a number read and compared
+    /// with the bounds, a length counted, a member compared. A tree is the one
+    /// space whose membership builds anything: its document is read by the strict
+    /// reader (D12). Twin of `Space.validate`.
     pub fn validate(&self, s: &str) -> bool {
-        self.canonical(s).is_some()
+        match self {
+            ValueSpace::IntRange(..) | ValueSpace::FloatRange(..) => self.respelled(s).is_some(),
+            ValueSpace::StringLen(lo, hi) => {
+                let len = utf16_len(s);
+                len >= i64::from(*lo) && len <= i64::from(*hi)
+            }
+            ValueSpace::Enum(xs) => xs.iter().any(|x| x == s),
+            ValueSpace::AnyString => true,
+            ValueSpace::SlotTree(c) => match (slot_kind_of(s), c) {
+                (None, _) => false,
+                (Some(_), None) => true,
+                (Some(k), Some(c)) => &k == c,
+            },
+        }
     }
 
     /// Is this a count space a repeat may range over: an `IntRange` with
@@ -661,15 +699,16 @@ pub enum InvokeError {
     /// The invocation binds this address twice.
     DuplicateArg { addr: String },
     /// A registry gate denied the invocation: the deciding gate, the denial's
-    /// message and the alternatives it names. No grant lifts it.
+    /// message and the alternatives it names, each shared with the gate that
+    /// made it rather than copied (DECISIONS.md D12). No grant lifts it.
     PolicyRefused {
-        policy: String,
-        reason: String,
-        allowed: Vec<String>,
+        policy: Arc<str>,
+        reason: Arc<str>,
+        allowed: Arc<[Arc<str>]>,
     },
     /// A registry gate requires an approval first, and no grant presented was
-    /// for exactly this invocation.
-    ApprovalRequired { policy: String },
+    /// for exactly this invocation; the gate's name is shared with the gate.
+    ApprovalRequired { policy: Arc<str> },
 }
 
 impl InvokeError {
@@ -820,27 +859,60 @@ impl Capability {
         self.signature.holes.iter().find(|h| h.addr == addr)
     }
 
-    /// The bindings of an invocation's canonical pre-image: each address with
-    /// its value's canonical spelling in its hole's space where it lies there,
-    /// else its own spelling, sorted by address (ordinal, stable as the
-    /// reference's `List.sortBy` is). Twin of `Capability.bindingFields`; the key
-    /// hashes their fields and the identity keeps them.
-    fn spelled_bindings<'a>(&self, args: &'a [(String, String)]) -> Vec<(&'a str, Cow<'a, str>)> {
-        let mut spelled: Vec<(&str, Cow<'_, str>)> = args
+    /// Every hole address, in declaration order — what an `UnknownArg` names.
+    fn declared(&self) -> Vec<String> {
+        self.signature
+            .holes
             .iter()
-            .map(|(a, v)| {
-                let canon = self
-                    .hole(a)
-                    .and_then(SigEntry::space)
-                    .and_then(|sp| sp.canonical(v));
-                (
-                    a.as_str(),
-                    canon.map_or(Cow::Borrowed(v.as_str()), Cow::Owned),
-                )
-            })
-            .collect();
-        spelled.sort_by(|x, y| ordinal_cmp(x.0, y.0));
-        spelled
+            .map(|h| h.addr.clone())
+            .collect()
+    }
+
+    /// The fields of an invocation's canonical pre-image after the id, written
+    /// through `out` as they are produced: each binding's address, then its
+    /// value's canonical spelling in its hole's space where it lies there, else
+    /// its own spelling, the bindings in address order (ordinal; equal addresses
+    /// in list order, as the reference's stable `List.sortBy` keeps them). Twin
+    /// of `Capability.bindingFields`; the key hashes these fields and the
+    /// identity keeps them.
+    ///
+    /// Nothing is built (DECISIONS.md D12): the order is found by selection, each
+    /// pass taking the least binding after the one last written, so it costs
+    /// `O(n²)` comparisons of addresses and no vector; a number is spelled
+    /// through `core::fmt` into the field ([`Respelled`]); and every value but a
+    /// number is written as sent, which is its canonical spelling where it lies
+    /// in its space and its own spelling where it does not, so no other space is
+    /// consulted (a tree argument is never parsed here).
+    fn write_binding_fields<W: Write + ?Sized>(
+        &self,
+        args: &[(String, String)],
+        out: &mut W,
+    ) -> fmt::Result {
+        // The binding at `i` comes after the one at `j` in the pre-image's order.
+        let after = |i: usize, j: usize| match ordinal_cmp(&args[i].0, &args[j].0) {
+            Ordering::Greater => true,
+            Ordering::Equal => i > j,
+            Ordering::Less => false,
+        };
+        let mut last: Option<usize> = None;
+        while let Some(at) = (0..args.len())
+            .filter(|&i| last.is_none_or(|l| after(i, l)))
+            .reduce(|best, i| if after(best, i) { i } else { best })
+        {
+            let (addr, value) = &args[at];
+            write_canonical_field(addr, out)?;
+            let respelled = match self.hole(addr).map(|h| &h.kind) {
+                Some(HoleKind::Value(sp) | HoleKind::Repeat(sp)) => sp.respelled(value),
+                _ => None,
+            };
+            match respelled {
+                Some(r) => write!(FieldBody(&mut *out), "{r}")?,
+                None => FieldBody(&mut *out).write_str(value)?,
+            }
+            out.write_char(FOLD_SEP)?;
+            last = Some(at);
+        }
+        Ok(())
     }
 
     /// The effect-identity key a non-deterministic invocation is journalled and
@@ -850,27 +922,46 @@ impl Capability {
     /// hash: never what a grant is bound to ([`Capability::invocation_identity`]).
     /// Twin of `Capability.invocationKey`.
     pub fn invocation_key(&self, args: &[(String, String)]) -> String {
-        let bindings = self.spelled_bindings(args);
-        let fields: Vec<&str> = bindings
-            .iter()
-            .flat_map(|(a, v)| [*a, v.as_ref()])
-            .collect();
-        keyed_by(&self.id, &fields)
+        let mut preimage = String::new();
+        self.write_binding_fields(args, &mut preimage)
+            .expect("a String accepts every write");
+        keyed_by_preimage(&self.id, &preimage)
     }
 
     /// The IDENTITY of one invocation, what a [`Grant`] is for: the capability id,
     /// then the fields the key hashes, as one canonical pre-image
-    /// ([`canonical_fields`]: every U+0010 and U+0001 a field holds preceded by
-    /// U+0010, each field terminated by U+0001), with NO hash taken. Injective:
-    /// two invocations share an identity only when they name one capability and
-    /// carry the same canonical bindings. Compared as bytes, never parsed. Twin of
-    /// `Capability.invocationPreimage`.
+    /// ([`canonical_fields`](crate::hash::canonical_fields): every U+0010 and
+    /// U+0001 a field holds preceded by U+0010, each field terminated by U+0001),
+    /// with NO hash taken. Injective: two invocations share an identity only when
+    /// they name one capability and carry the same canonical bindings. Compared
+    /// as bytes, never parsed. Twin of `Capability.invocationPreimage`.
+    ///
+    /// The one allocation is the answer, sized exactly: the identity is written
+    /// once to measure it and once into the string. Deciding builds nothing:
+    /// [`Grant::covers_invocation`] compares a grant with the identity as it is
+    /// written, and [`Capability::write_invocation_identity`] writes it into a
+    /// host's own buffer (DECISIONS.md D12).
     pub fn invocation_identity(&self, args: &[(String, String)]) -> String {
-        let bindings = self.spelled_bindings(args);
-        let fields: Vec<&str> = core::iter::once(self.id.as_str())
-            .chain(bindings.iter().flat_map(|(a, v)| [*a, v.as_ref()]))
-            .collect();
-        canonical_fields(&fields)
+        let mut measured = Measured(0);
+        self.write_invocation_identity(args, &mut measured)
+            .expect("measuring accepts every write");
+        let mut identity = String::with_capacity(measured.0);
+        self.write_invocation_identity(args, &mut identity)
+            .expect("a String accepts every write");
+        identity
+    }
+
+    /// [`Capability::invocation_identity`] written through `out` as it is
+    /// produced, building nothing: the form a host with no allocation to spare
+    /// writes the identity in, into a buffer of its own, to mint or to log a
+    /// grant. `out`'s refusal stops the write and is answered.
+    pub fn write_invocation_identity<W: Write + ?Sized>(
+        &self,
+        args: &[(String, String)],
+        out: &mut W,
+    ) -> fmt::Result {
+        write_canonical_field(&self.id, out)?;
+        self.write_binding_fields(args, out)
     }
 
     /// The grant for exactly this invocation: what a host mints when an approval
@@ -879,33 +970,45 @@ impl Capability {
         Grant::of_invocation(self.invocation_identity(args))
     }
 
-    /// The refusal one argument earns on its own. Twin of `Capability.argFault`.
-    fn arg_fault(&self, declared: &[String], addr: &str, value: &str) -> Option<InvokeError> {
+    /// The refusal one argument earns on its own, decided on the value: the
+    /// space a refusal names is copied only when the argument is refused, and a
+    /// tree argument's document is read once. Twin of `Capability.argFault`.
+    fn arg_fault(&self, addr: &str, value: &str) -> Option<InvokeError> {
         let Some(h) = self.hole(addr) else {
             return Some(InvokeError::UnknownArg {
                 addr: addr.to_string(),
-                declared: declared.to_vec(),
+                declared: self.declared(),
             });
         };
-        match h.space() {
-            None => Some(InvokeError::UninvocableArg {
-                addr: addr.to_string(),
-            }),
-            Some(ValueSpace::SlotTree(_)) if slot_kind_of(value).is_none() => {
-                Some(InvokeError::UninvocableArg {
-                    addr: addr.to_string(),
-                })
+        let uninvocable = || InvokeError::UninvocableArg {
+            addr: addr.to_string(),
+        };
+        let out_of_space = |space: ValueSpace| InvokeError::ArgOutOfSpace {
+            addr: addr.to_string(),
+            space,
+            got: value.to_string(),
+        };
+        // A tree argument: not a tree at all is uninvocable, a tree of another
+        // kind is out of the space.
+        let tree = |c: &Option<String>| match slot_kind_of(value) {
+            None => Some(uninvocable()),
+            Some(k) if c.as_ref().is_none_or(|c| *c == k) => None,
+            Some(_) => Some(out_of_space(ValueSpace::SlotTree(c.clone()))),
+        };
+        match &h.kind {
+            HoleKind::Action(_) => Some(uninvocable()),
+            HoleKind::Slot(c)
+            | HoleKind::Value(ValueSpace::SlotTree(c))
+            | HoleKind::Repeat(ValueSpace::SlotTree(c)) => tree(c),
+            HoleKind::Value(sp) | HoleKind::Repeat(sp) => {
+                (!sp.validate(value)).then(|| out_of_space(sp.clone()))
             }
-            Some(space) if space.validate(value) => None,
-            Some(space) => Some(InvokeError::ArgOutOfSpace {
-                addr: addr.to_string(),
-                space,
-                got: value.to_string(),
-            }),
         }
     }
 
-    fn unbound(&self, args: &[(String, String)]) -> Vec<String> {
+    /// The required holes `args` leaves unbound, in declaration order; building
+    /// nothing when every one is bound.
+    fn unbound<V>(&self, args: &[(String, V)]) -> Vec<String> {
         self.signature
             .holes
             .iter()
@@ -918,22 +1021,21 @@ impl Capability {
     /// shape: every address bound once (`DuplicateArg`), every argument at a
     /// declared hole (`UnknownArg`) that takes a caller's value
     /// (`UninvocableArg`) in its space (`ArgOutOfSpace`), then every required hole
-    /// bound (`RequiredArgsUnbound`). The first refusal wins. Twin of
-    /// `Capability.validateArgs`.
+    /// bound (`RequiredArgsUnbound`). The first refusal wins. Membership is decided
+    /// on the value and a refusal is built only when one is answered, so an
+    /// admitted invocation builds nothing unless it carries a tree argument
+    /// (DECISIONS.md D12). Twin of `Capability.validateArgs`.
     pub fn validate_args(&self, args: &[(String, String)]) -> Result<(), InvokeError> {
-        if let Some(dup) = repeated_addrs(args).into_iter().next() {
-            return Err(InvokeError::DuplicateArg { addr: dup });
+        // The first binding, in list order, whose address an earlier one binds:
+        // the head of `repeated_addrs`, found without collecting it.
+        let repeat = args
+            .iter()
+            .enumerate()
+            .find(|(i, (a, _))| args[..*i].iter().any(|(b, _)| b == a));
+        if let Some((_, (addr, _))) = repeat {
+            return Err(InvokeError::DuplicateArg { addr: addr.clone() });
         }
-        let declared: Vec<String> = self
-            .signature
-            .holes
-            .iter()
-            .map(|h| h.addr.clone())
-            .collect();
-        if let Some(e) = args
-            .iter()
-            .find_map(|(a, v)| self.arg_fault(&declared, a, v))
-        {
+        if let Some(e) = args.iter().find_map(|(a, v)| self.arg_fault(a, v)) {
             return Err(e);
         }
         let unbound = self.unbound(args);
@@ -949,20 +1051,11 @@ impl Capability {
     /// unbound required holes. Its head is `validate_args`'s refusal. Twin of
     /// `Capability.validateArgsAll`.
     pub fn validate_args_all(&self, args: &[(String, String)]) -> Result<(), Vec<InvokeError>> {
-        let declared: Vec<String> = self
-            .signature
-            .holes
-            .iter()
-            .map(|h| h.addr.clone())
-            .collect();
         let mut all: Vec<InvokeError> = repeated_addrs(args)
             .into_iter()
             .map(|addr| InvokeError::DuplicateArg { addr })
             .collect();
-        all.extend(
-            args.iter()
-                .filter_map(|(a, v)| self.arg_fault(&declared, a, v)),
-        );
+        all.extend(args.iter().filter_map(|(a, v)| self.arg_fault(a, v)));
         let unbound = self.unbound(args);
         if !unbound.is_empty() {
             all.push(InvokeError::RequiredArgsUnbound { addrs: unbound });
@@ -1358,6 +1451,12 @@ pub fn encode_invocation(capability_id: &str, args: &[(String, String)]) -> Stri
 /// it refuses, `Allow < NeedsApproval < Deny`; a registry's decision is the join
 /// (the most refusing) over its gates, and a denial is GUIDANCE: the message and
 /// the alternatives a refused caller may take instead. Twin of `PolicyDecision`.
+///
+/// The guidance is SHARED text (`Arc<str>`), the twin of the reference's
+/// immutable strings: a gate builds it once, when the gate is built, and every
+/// denial it makes carries it by a reference count, so deciding copies nothing
+/// and allocates nothing (DECISIONS.md D12). A gate that builds its guidance
+/// inside its decision allocates there, on every denial.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyDecision {
     /// The invocation may proceed now.
@@ -1367,23 +1466,26 @@ pub enum PolicyDecision {
     NeedsApproval,
     /// The invocation is refused. No grant lifts it.
     Deny {
-        message: String,
-        alternatives: Vec<String>,
+        message: Arc<str>,
+        alternatives: Arc<[Arc<str>]>,
     },
 }
 
 impl PolicyDecision {
     /// A denial with `reason` and no alternatives. Twin of `PolicyDecision.deny`.
-    pub fn deny(reason: impl Into<String>) -> PolicyDecision {
-        PolicyDecision::deny_with(reason, Vec::new())
+    pub fn deny(reason: impl Into<Arc<str>>) -> PolicyDecision {
+        PolicyDecision::deny_with(reason, Arc::<[Arc<str>]>::default())
     }
 
     /// A denial with `reason` and the alternatives the caller may take instead.
     /// Twin of `PolicyDecision.denyWith`.
-    pub fn deny_with(reason: impl Into<String>, alternatives: Vec<String>) -> PolicyDecision {
+    pub fn deny_with(
+        reason: impl Into<Arc<str>>,
+        alternatives: impl Into<Arc<[Arc<str>]>>,
+    ) -> PolicyDecision {
         PolicyDecision::Deny {
             message: reason.into(),
-            alternatives,
+            alternatives: alternatives.into(),
         }
     }
 
@@ -1437,6 +1539,37 @@ impl Grant {
     pub fn covers(&self, identity: &str) -> bool {
         self.invocation.as_bytes() == identity.as_bytes()
     }
+
+    /// Is the grant for exactly the invocation of `c` with `args`: what
+    /// `covers(&c.invocation_identity(args))` answers, with the identity compared
+    /// with the grant's bytes AS IT IS WRITTEN, stopping at the first byte that
+    /// differs, and never built (DECISIONS.md D12). What a dispatch asks.
+    pub fn covers_invocation(&self, c: &Capability, args: &[(String, String)]) -> bool {
+        let mut rest = Unmatched(self.invocation.as_bytes());
+        c.write_invocation_identity(args, &mut rest).is_ok() && rest.0.is_empty()
+    }
+}
+
+/// The bytes of a grant not yet matched by the identity being written: each
+/// write must be their prefix, and a write that is not refuses, which stops the
+/// identity there.
+struct Unmatched<'a>(&'a [u8]);
+
+impl Write for Unmatched<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0 = self.0.strip_prefix(s.as_bytes()).ok_or(fmt::Error)?;
+        Ok(())
+    }
+}
+
+/// The length in bytes of what is written through it; it keeps nothing.
+struct Measured(usize);
+
+impl Write for Measured {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0 += s.len();
+        Ok(())
+    }
 }
 
 /// A gate's decision function: the decision context, the resolved declaration
@@ -1446,16 +1579,18 @@ type Decide<C> = dyn Fn(&C, &Capability, &[(String, String)]) -> PolicyDecision 
 
 /// One named gate over a registry's invocations: its name, carried by every
 /// refusal it makes, and its decision under a context `C`. The context is the
-/// host's type; the core names nothing it holds. Twin of `PolicyGate`.
+/// host's type; the core names nothing it holds. The name is shared text, so a
+/// refusal carries it by a reference count and never a copy (DECISIONS.md D12).
+/// Twin of `PolicyGate`.
 pub struct PolicyGate<C> {
-    policy: String,
+    policy: Arc<str>,
     decide: Arc<Decide<C>>,
 }
 
 impl<C> PolicyGate<C> {
     /// A gate named `policy` deciding with `decide`.
     pub fn new(
-        policy: impl Into<String>,
+        policy: impl Into<Arc<str>>,
         decide: impl Fn(&C, &Capability, &[(String, String)]) -> PolicyDecision + Send + Sync + 'static,
     ) -> PolicyGate<C> {
         PolicyGate {
@@ -1467,7 +1602,7 @@ impl<C> PolicyGate<C> {
     /// A gate that decides on the declaration and the arguments alone, the same
     /// under every context. Twin of `PolicyGate.ignoringContext`.
     pub fn ignoring_context(
-        policy: impl Into<String>,
+        policy: impl Into<Arc<str>>,
         decide: impl Fn(&Capability, &[(String, String)]) -> PolicyDecision + Send + Sync + 'static,
     ) -> PolicyGate<C> {
         PolicyGate::new(
@@ -1490,7 +1625,7 @@ impl<C> PolicyGate<C> {
 impl<C> Clone for PolicyGate<C> {
     fn clone(&self) -> Self {
         PolicyGate {
-            policy: self.policy.clone(),
+            policy: Arc::clone(&self.policy),
             decide: Arc::clone(&self.decide),
         }
     }
@@ -1661,10 +1796,12 @@ impl<C> CapabilityRegistry<C> {
     }
 
     /// The ONE judgement the named read and every dispatch share: resolve,
-    /// validate, then the gates' join under `ctx` with the deciding gate's name
-    /// (the FIRST gate of the most refusing rank, `""` when every gate allows),
-    /// a `NeedsApproval` lifted to `Allow` when `grant` is for exactly this
-    /// invocation, its name kept. Twin of `KeyedRegistry.judge` over
+    /// validate, then the gates' join under `ctx` with the deciding gate (the
+    /// FIRST gate of the most refusing rank, none when every gate allows), a
+    /// `NeedsApproval` lifted to `Allow` when `grant` is for exactly this
+    /// invocation, the gate kept. Builds nothing on an admitted invocation: the
+    /// gate is borrowed and the grant is compared with the identity as it is
+    /// written (DECISIONS.md D12). Twin of `KeyedRegistry.judge` over
     /// `RegistryPolicy.decideGranted`.
     fn judge(
         &self,
@@ -1672,31 +1809,32 @@ impl<C> CapabilityRegistry<C> {
         grant: Option<&Grant>,
         id: &str,
         args: &[(String, String)],
-    ) -> Result<(&Capability, &str, PolicyDecision), InvokeError> {
+    ) -> Result<(&Capability, Option<&PolicyGate<C>>, PolicyDecision), InvokeError> {
         let c = self.resolve(id, args)?;
-        let mut name = "";
+        let mut decider = None;
         let mut decision = PolicyDecision::Allow;
         for g in &self.gates {
             let d = g.decide(ctx, c, args);
             if d.rank() > decision.rank() {
-                name = &g.policy;
+                decider = Some(g);
                 decision = d;
             }
         }
-        // The identity is rendered only when a gate asks for an approval.
+        // The identity is compared only when a gate asks for an approval.
         if decision == PolicyDecision::NeedsApproval {
-            let granted = grant.is_some_and(|g| g.covers(&c.invocation_identity(args)));
+            let granted = grant.is_some_and(|g| g.covers_invocation(c, args));
             decision = decision.lifted(granted);
         }
-        Ok((c, name, decision))
+        Ok((c, decider, decision))
     }
 
     /// The registry's NAMED decision for an invocation, without dispatching it:
-    /// `Ok` of the deciding gate's name and the decision (a `NeedsApproval` the
-    /// grant is for lifted to `Allow`, the name kept, so it still says whose
-    /// approval was answered; no grant lifts a `Deny`), or, where no gate decided,
-    /// the refusal a dispatch gives: `NoSuchCapability` naming the held ids, or
-    /// the validation refusal. Advisory: [`CapabilityRegistry::dispatch`] judges
+    /// `Ok` of the deciding gate's name, borrowed from the registry (`""` when
+    /// every gate allows), and the decision (a `NeedsApproval` the grant is for
+    /// lifted to `Allow`, the name kept, so it still says whose approval was
+    /// answered; no grant lifts a `Deny`), or, where no gate decided, the refusal
+    /// a dispatch gives: `NoSuchCapability` naming the held ids, or the
+    /// validation refusal. Advisory: [`CapabilityRegistry::dispatch`] judges
     /// again, through the same function, and is authoritative. Twin of
     /// `CapabilityRegistry.decideNamed`.
     pub fn decide_named(
@@ -1705,9 +1843,9 @@ impl<C> CapabilityRegistry<C> {
         grant: Option<&Grant>,
         id: &str,
         args: &[(String, String)],
-    ) -> Result<(String, PolicyDecision), InvokeError> {
+    ) -> Result<(&str, PolicyDecision), InvokeError> {
         self.judge(ctx, grant, id, args)
-            .map(|(_, name, d)| (name.to_string(), d))
+            .map(|(_, gate, d)| (gate.map_or("", PolicyGate::policy), d))
     }
 
     /// Dispatch an invocation: resolve the id (default-deny — an id the registry
@@ -1716,7 +1854,8 @@ impl<C> CapabilityRegistry<C> {
     /// presented; a `NeedsApproval` is `ApprovalRequired` unless `grant` is for
     /// exactly this invocation), and only then hand the resolved capability to
     /// `perform`, the host's body, exactly once; its refusal is the dispatch's. A
-    /// refused dispatch never runs `perform`. Twin of `CapabilityRegistry.dispatch`.
+    /// refused dispatch never runs `perform`. A refusal shares the deciding gate's
+    /// name and its guidance with the gate. Twin of `CapabilityRegistry.dispatch`.
     pub fn dispatch<T>(
         &self,
         ctx: &C,
@@ -1725,17 +1864,19 @@ impl<C> CapabilityRegistry<C> {
         args: &[(String, String)],
         perform: impl FnOnce(&Capability) -> Result<T, InvokeError>,
     ) -> Result<T, InvokeError> {
-        let (c, name, decision) = self.judge(ctx, grant, id, args)?;
+        let (c, gate, decision) = self.judge(ctx, grant, id, args)?;
+        // Only a deciding gate refuses, so a refusal always has one to name.
+        let policy = || gate.map_or_else(|| Arc::from(""), |g| Arc::clone(&g.policy));
         match decision {
             PolicyDecision::Allow => perform(c),
-            PolicyDecision::NeedsApproval => Err(InvokeError::ApprovalRequired {
-                policy: name.to_string(),
-            }),
+            PolicyDecision::NeedsApproval => {
+                Err(InvokeError::ApprovalRequired { policy: policy() })
+            }
             PolicyDecision::Deny {
                 message,
                 alternatives,
             } => Err(InvokeError::PolicyRefused {
-                policy: name.to_string(),
+                policy: policy(),
                 reason: message,
                 allowed: alternatives,
             }),
@@ -1757,7 +1898,7 @@ impl<C> CapabilityRegistry<C> {
             .map(|g| {
                 let (ctx, decide) = (Arc::clone(&ctx), Arc::clone(&g.decide));
                 PolicyGate::new(
-                    g.policy.clone(),
+                    Arc::clone(&g.policy),
                     move |_: &(), c: &Capability, a: &[(String, String)]| decide(&ctx, c, a),
                 )
             })
@@ -2052,17 +2193,16 @@ impl CapabilityPipeline {
             node: nid.to_string(),
             reason,
         };
-        let declared: Vec<String> = cap.signature.holes.iter().map(|h| h.addr.clone()).collect();
         if let Some(addr) = repeated_addrs(args).into_iter().next() {
             return Err(refused(InvokeError::DuplicateArg { addr }));
         }
         for (addr, src) in args {
             let fault = match src {
-                ArgSource::Literal(v) => cap.arg_fault(&declared, addr, v).map(refused),
+                ArgSource::Literal(v) => cap.arg_fault(addr, v).map(refused),
                 ArgSource::FromNode(up) => match cap.hole(addr) {
                     None => Some(refused(InvokeError::UnknownArg {
                         addr: addr.clone(),
-                        declared: declared.clone(),
+                        declared: cap.declared(),
                     })),
                     Some(h) => match h.space() {
                         None => Some(refused(InvokeError::UninvocableArg { addr: addr.clone() })),
@@ -2074,13 +2214,7 @@ impl CapabilityPipeline {
                 return Err(e);
             }
         }
-        let unbound: Vec<String> = cap
-            .signature
-            .holes
-            .iter()
-            .filter(|h| h.required && !args.iter().any(|(a, _)| *a == h.addr))
-            .map(|h| h.addr.clone())
-            .collect();
+        let unbound = cap.unbound(args);
         if unbound.is_empty() {
             Ok(())
         } else {

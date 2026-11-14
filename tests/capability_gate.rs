@@ -10,10 +10,16 @@
 //! (each label's index in `contexts`), the context an embedded host decides on.
 //! The family's size is its row in `laws/manifest.json`, and every leg asserts
 //! the count of each case it ran.
+//!
+//! The identity and a grant's coverage are answered in the forms a decision
+//! uses, which build nothing (DECISIONS.md D12): the identity written through a
+//! writer, and the grant compared with it as it is written. Each is asserted to
+//! agree with the built form, the identity's `String` and `Grant::covers`.
 
 mod common;
 
 use std::cell::Cell;
+use std::sync::Arc;
 
 use common::*;
 use fuaran_core::capability::{
@@ -54,7 +60,13 @@ fn decision_of(v: &JVal) -> PolicyDecision {
     match s(v, "decision") {
         "allow" => PolicyDecision::Allow,
         "needsApproval" => PolicyDecision::NeedsApproval,
-        "deny" => PolicyDecision::deny_with(s(v, "message"), str_items(v, "alternatives")),
+        "deny" => PolicyDecision::deny_with(
+            s(v, "message"),
+            str_items(v, "alternatives")
+                .iter()
+                .map(|a| Arc::from(a.as_str()))
+                .collect::<Vec<Arc<str>>>(),
+        ),
         other => panic!("unknown decision {other}"),
     }
 }
@@ -70,17 +82,18 @@ fn decision_members(d: PolicyDecision) -> Vec<(String, JVal)> {
             alternatives,
         } => vec![
             ("decision".into(), JVal::Str("deny".into())),
-            ("message".into(), JVal::Str(message)),
-            (
-                "alternatives".into(),
-                JVal::Arr(alternatives.into_iter().map(JVal::Str).collect()),
-            ),
+            ("message".into(), JVal::Str(message.to_string())),
+            ("alternatives".into(), shared(&alternatives)),
         ],
     }
 }
 
 fn strs(xs: Vec<String>) -> JVal {
     JVal::Arr(xs.into_iter().map(JVal::Str).collect())
+}
+
+fn shared(xs: &[Arc<str>]) -> JVal {
+    JVal::Arr(xs.iter().map(|x| JVal::Str(x.to_string())).collect())
 }
 
 /// A refusal in the file's words; one the family does not name is `unexpected`.
@@ -102,13 +115,13 @@ fn refusal_members(e: InvokeError) -> Vec<(String, JVal)> {
             allowed,
         } => vec![
             ("error".into(), str("policyRefused")),
-            ("policy".into(), JVal::Str(policy)),
-            ("reason".into(), JVal::Str(reason)),
-            ("allowed".into(), strs(allowed)),
+            ("policy".into(), str(&policy)),
+            ("reason".into(), str(&reason)),
+            ("allowed".into(), shared(&allowed)),
         ],
         InvokeError::ApprovalRequired { policy } => vec![
             ("error".into(), str("approvalRequired")),
-            ("policy".into(), JVal::Str(policy)),
+            ("policy".into(), str(&policy)),
         ],
         other => vec![
             ("error".into(), str("unexpected")),
@@ -168,13 +181,25 @@ fn answer<X>(r: &CapabilityRegistry<X>, ctx_of: &dyn Fn(&str) -> X, v: &JVal) ->
             .unwrap_or_else(|| panic!("{id} is not declared in the head"))
     };
     let members: Vec<(String, JVal)> = match s(v, "case") {
-        "invocationIdentity" => vec![(
-            "identity".into(),
-            JVal::Str(cap().invocation_identity(&args)),
-        )],
+        "invocationIdentity" => {
+            let mut written = String::new();
+            cap()
+                .write_invocation_identity(&args, &mut written)
+                .expect("a String accepts every write");
+            assert_eq!(written, cap().invocation_identity(&args), "{}", s(v, "id"));
+            vec![("identity".into(), JVal::Str(written))]
+        }
         "grantCovers" => {
+            let covers = grant
+                .as_ref()
+                .is_some_and(|g| g.covers_invocation(cap(), &args));
             let identity = cap().invocation_identity(&args);
-            let covers = grant.as_ref().is_some_and(|g| g.covers(&identity));
+            assert_eq!(
+                covers,
+                grant.as_ref().is_some_and(|g| g.covers(&identity)),
+                "{}",
+                s(v, "id")
+            );
             vec![("covers".into(), JVal::Bool(covers))]
         }
         "decideNamed" => {
@@ -183,7 +208,7 @@ fn answer<X>(r: &CapabilityRegistry<X>, ctx_of: &dyn Fn(&str) -> X, v: &JVal) ->
                 Ok((policy, d)) => {
                     let mut m = vec![
                         ("verdict".into(), JVal::Str("decided".into())),
-                        ("policy".into(), JVal::Str(policy)),
+                        ("policy".into(), JVal::Str(policy.to_string())),
                     ];
                     m.extend(decision_members(d));
                     m

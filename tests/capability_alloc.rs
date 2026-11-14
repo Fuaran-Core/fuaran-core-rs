@@ -15,7 +15,9 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::fmt::{self, Write};
 use std::hint::black_box;
+use std::sync::Arc;
 
 use fuaran_core::capability::{
     Capability, CapabilityRegistry, InvokeError, PolicyDecision, PolicyGate,
@@ -87,15 +89,16 @@ const UNTRUSTED: u8 = 1;
 /// The family's `ceiling` gate over a `u8` context, its denial's guidance built
 /// once with the gate and carried by every denial it makes.
 fn ceiling() -> PolicyGate<u8> {
-    let message: String = "erasing is not open to this context".into();
-    let alternatives: Vec<String> = vec!["read".into()];
+    let message: Arc<str> = "erasing is not open to this context".into();
+    let alternatives: Arc<[Arc<str>]> = [Arc::from("read")].into();
     PolicyGate::new(
         "ceiling",
         move |ctx: &u8, c: &Capability, _: &[(String, String)]| match (*ctx, c.id.as_str()) {
             (UNTRUSTED, "write") => PolicyDecision::NeedsApproval,
-            (UNTRUSTED, "erase") => {
-                PolicyDecision::deny_with(message.clone(), alternatives.clone())
-            }
+            (UNTRUSTED, "erase") => PolicyDecision::Deny {
+                message: Arc::clone(&message),
+                alternatives: Arc::clone(&alternatives),
+            },
             _ => PolicyDecision::Allow,
         },
     )
@@ -109,6 +112,36 @@ fn registry() -> CapabilityRegistry<u8> {
                 .expect("admitted")
         })
         .with_gate(ceiling())
+}
+
+/// A text of at most `N` bytes on the stack: where a host with no allocation
+/// to spare writes an identity.
+struct StackText<const N: usize> {
+    bytes: [u8; N],
+    len: usize,
+}
+
+impl<const N: usize> StackText<N> {
+    fn new() -> Self {
+        StackText {
+            bytes: [0; N],
+            len: 0,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+impl<const N: usize> Write for StackText<N> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let end = self.len + s.len();
+        let room = self.bytes.get_mut(self.len..end).ok_or(fmt::Error)?;
+        room.copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
+    }
 }
 
 fn bindings(xs: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -125,7 +158,12 @@ fn the_decision_path_allocates_nothing_once_the_registry_is_built() {
     let w_args = bindings(&[("n", "7"), ("x", "1.5"), ("s", "a")]);
     let r_args = bindings(&[("n", "3")]);
     let e_args = bindings(&[("n", "3")]);
+    // The same invocation, its bindings in another order and its numbers in
+    // other spellings: the grant minted for `w_args` is for it too.
+    let w_respelled = bindings(&[("s", "a"), ("x", "1.50"), ("n", "07")]);
     let own = write.grant(&w_args);
+    let other = write.grant(&bindings(&[("n", "8"), ("x", "1.5"), ("s", "a")]));
+    let guidance: Arc<str> = "an erase is held for the audit".into();
 
     let mut table: Vec<(&str, (usize, usize))> = Vec::new();
 
@@ -139,25 +177,22 @@ fn the_decision_path_allocates_nothing_once_the_registry_is_built() {
     );
 
     let (n, d) = measure(|| r.decide_named(&TRUSTED, None, "read", &r_args));
-    assert_eq!(d, Ok(("".to_string(), PolicyDecision::Allow)));
+    assert_eq!(d, Ok(("", PolicyDecision::Allow)));
     table.push(("decide_named, allowed, one binding", n));
 
     let (n, d) = measure(|| r.decide_named(&UNTRUSTED, None, "write", &w_args));
-    assert_eq!(
-        d,
-        Ok(("ceiling".to_string(), PolicyDecision::NeedsApproval))
-    );
+    assert_eq!(d, Ok(("ceiling", PolicyDecision::NeedsApproval)));
     table.push(("decide_named, needs approval, no grant, three bindings", n));
 
     let (n, d) = measure(|| r.decide_named(&UNTRUSTED, Some(&own), "write", &w_args));
-    assert_eq!(d, Ok(("ceiling".to_string(), PolicyDecision::Allow)));
+    assert_eq!(d, Ok(("ceiling", PolicyDecision::Allow)));
     table.push((
         "decide_named, needs approval, its own grant, three bindings",
         n,
     ));
 
     let (n, d) = measure(|| r.decide_named(&UNTRUSTED, None, "erase", &e_args));
-    assert!(matches!(d, Ok((ref p, PolicyDecision::Deny { .. })) if p == "ceiling"));
+    assert!(matches!(d, Ok(("ceiling", PolicyDecision::Deny { .. }))));
     drop(d);
     table.push(("decide_named, denied, one binding", n));
 
@@ -169,6 +204,10 @@ fn the_decision_path_allocates_nothing_once_the_registry_is_built() {
     assert_eq!(d, Ok(()));
     table.push(("dispatch, granted, three bindings", n));
 
+    let (n, d) = measure(|| r.dispatch(&UNTRUSTED, Some(&own), "write", &w_respelled, |_| Ok(())));
+    assert_eq!(d, Ok(()));
+    table.push(("dispatch, granted, out of address order and respelled", n));
+
     let (n, d) = measure(|| r.dispatch(&UNTRUSTED, None, "write", &w_args, |_| Ok(())));
     assert!(matches!(d, Err(InvokeError::ApprovalRequired { .. })));
     drop(d);
@@ -179,17 +218,59 @@ fn the_decision_path_allocates_nothing_once_the_registry_is_built() {
     drop(d);
     table.push(("dispatch, denied, one binding", n));
 
-    let (n, d) = measure(|| read.invocation_identity(&r_args));
-    drop(d);
-    table.push(("invocation_identity, one binding", n));
+    // The identity: written into a host's own buffer, which is what the embedded
+    // profile offers in place of the `String` (D12), and compared with a grant
+    // as it is written.
+    let (n, d) = measure(|| {
+        let mut buf = StackText::<64>::new();
+        read.write_invocation_identity(&r_args, &mut buf)
+            .map(|()| buf)
+    });
+    assert_eq!(d.expect("fits").as_bytes(), b"read\x01n\x013\x01");
+    table.push((
+        "invocation identity written to a stack buffer, one binding",
+        n,
+    ));
 
-    let (n, d) = measure(|| write.invocation_identity(&w_args));
-    drop(d);
-    table.push(("invocation_identity, three bindings", n));
+    let (n, d) = measure(|| {
+        let mut buf = StackText::<64>::new();
+        write
+            .write_invocation_identity(&w_args, &mut buf)
+            .map(|()| buf)
+    });
+    assert_eq!(d.expect("fits").as_bytes(), own.invocation().as_bytes());
+    table.push((
+        "invocation identity written to a stack buffer, three bindings",
+        n,
+    ));
+
+    let (n, d) = measure(|| own.covers_invocation(&write, &w_respelled));
+    assert!(d);
+    table.push(("Grant::covers_invocation, its own grant, three bindings", n));
+
+    let (n, d) = measure(|| other.covers_invocation(&write, &w_args));
+    assert!(!d);
+    table.push(("Grant::covers_invocation, another grant, three bindings", n));
 
     let (n, d) = measure(|| own.covers(own.invocation()));
     assert!(d);
     table.push(("Grant::covers, given the identity", n));
+
+    let (n, d) = measure(|| PolicyDecision::deny(Arc::clone(&guidance)));
+    assert!(matches!(d, PolicyDecision::Deny { ref alternatives, .. } if alternatives.is_empty()));
+    drop(d);
+    table.push(("a denial of shared guidance, no alternatives", n));
+
+    // The identity as a `String` allocates its answer and nothing else, sized
+    // exactly: one allocation of the identity's length.
+    let (n, d) = measure(|| write.invocation_identity(&w_args));
+    assert_eq!(d, own.invocation());
+    assert_eq!(
+        n,
+        (1, d.len()),
+        "invocation_identity: its answer and nothing else"
+    );
+    drop(d);
 
     // Building the registry is outside the claim (D12): reported, not asserted.
     let built = r.clone();

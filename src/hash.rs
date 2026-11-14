@@ -8,6 +8,7 @@
 //! signature.
 
 use crate::prelude::*;
+use core::fmt::{self, Write};
 
 /// The field terminator of a canonical pre-image, `U+0001`. Twin of `Hash.foldSep`.
 pub const FOLD_SEP: char = '\u{0001}';
@@ -34,14 +35,34 @@ pub fn fnv1a(s: &str) -> String {
 /// escaped, then the terminator. Twin of `Hash.canonicalField`.
 pub fn canonical_field(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 1);
-    for c in s.chars() {
-        if c == FIELD_ESC || c == FOLD_SEP {
-            out.push(FIELD_ESC);
-        }
-        out.push(c);
-    }
-    out.push(FOLD_SEP);
+    write_canonical_field(s, &mut out).expect("a String accepts every write");
     out
+}
+
+/// [`canonical_field`] written through `out`, building nothing.
+pub(crate) fn write_canonical_field<W: Write + ?Sized>(s: &str, out: &mut W) -> fmt::Result {
+    FieldBody(out).write_str(s)?;
+    out.write_char(FOLD_SEP)
+}
+
+/// The body of one field as it is written: every [`FIELD_ESC`] and [`FOLD_SEP`]
+/// written through it is preceded by [`FIELD_ESC`]; the caller writes the
+/// terminator. A writer, so a field's text can be produced straight into the
+/// pre-image (a number through `core::fmt`) without being spelled first.
+pub(crate) struct FieldBody<'a, W: ?Sized>(pub(crate) &'a mut W);
+
+impl<W: Write + ?Sized> Write for FieldBody<'_, W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let mut from = 0;
+        for (i, c) in s.char_indices() {
+            if c == FIELD_ESC || c == FOLD_SEP {
+                self.0.write_str(&s[from..i])?;
+                self.0.write_char(FIELD_ESC)?;
+                from = i;
+            }
+        }
+        self.0.write_str(&s[from..])
+    }
 }
 
 /// The canonical pre-image of a field sequence; injective. Twin of `Hash.canonicalFields`.
@@ -51,7 +72,12 @@ pub fn canonical_fields<S: AsRef<str>>(fields: &[S]) -> String {
 
 /// The key builder: `prefix#fnv1a(canonical_fields(fields))`. Twin of `Hash.keyedBy`.
 pub fn keyed_by<S: AsRef<str>>(prefix: &str, fields: &[S]) -> String {
-    format!("{prefix}#{}", fnv1a(&canonical_fields(fields)))
+    keyed_by_preimage(prefix, &canonical_fields(fields))
+}
+
+/// [`keyed_by`] over a pre-image already written: `prefix#fnv1a(preimage)`.
+pub(crate) fn keyed_by_preimage(prefix: &str, preimage: &str) -> String {
+    format!("{prefix}#{}", fnv1a(preimage))
 }
 
 #[cfg(test)]

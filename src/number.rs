@@ -4,6 +4,7 @@
 //! number every other host writes.
 
 use crate::prelude::*;
+use core::fmt::{self, Write};
 
 /// The canonical number form: finite doubles in the canonical layout, the IEEE
 /// specials as quoted sentinel strings, negative zero collapsed to `0`.
@@ -36,18 +37,30 @@ pub fn format_number(n: f64) -> String {
 /// `formatFiniteDouble`; the shared corpus's `metric-float-*` fixtures pin the
 /// divergence-zone values.
 pub fn format_finite_double(f: f64) -> String {
+    let mut out = String::new();
+    write_finite_double(f, &mut out).expect("a String accepts every write");
+    out
+}
+
+/// [`format_finite_double`] written through `out`, building nothing: the
+/// shortest digits are rendered into a buffer on the stack and laid out from
+/// there. The form the invocation's identity is written in, so a number in it
+/// costs no allocation (DECISIONS.md D12).
+pub(crate) fn write_finite_double<W: Write + ?Sized>(f: f64, out: &mut W) -> fmt::Result {
     if f == 0.0 {
-        return "0".to_string(); // collapses -0.0 to 0 (−0.0 == 0.0 in IEEE 754)
+        return out.write_str("0"); // collapses -0.0 to 0 (−0.0 == 0.0 in IEEE 754)
     }
 
-    // Shortest round-trip digits via the scientific form `d[.ddd]e±XX`.
-    let mut s = format!("{f:e}");
+    // Shortest round-trip digits via the scientific form `d[.ddd]e±XX`; the
+    // longest a finite f64 takes is 24 bytes (`-1.2345678901234567e-308`).
+    let mut buf = StackText::<32>::new();
+    write!(buf, "{f:e}")?;
+    let s = buf.as_str();
 
-    let neg = s.starts_with('-');
-    if neg {
-        s.remove(0);
-    }
-
+    let (neg, s) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s),
+    };
     let e_idx = s.find('e').expect("{:e} always emits an 'e'");
     let mantissa = &s[..e_idx];
     let exp: i32 = s[e_idx + 1..].parse().expect("{:e} exponent is an integer");
@@ -57,46 +70,107 @@ pub fn format_finite_double(f: f64) -> String {
         None => (mantissa, ""),
     };
     // Significant digits; the first digit has place value 10^exp.
-    let digits = format!("{int_part}{frac_part}");
+    let digits = Digits(int_part, frac_part);
 
-    let out = if (-4..=16).contains(&exp) {
-        fixed_point(&digits, exp)
+    if neg {
+        out.write_char('-')?;
+    }
+    if (-4..=16).contains(&exp) {
+        fixed_point(&digits, exp, out)
     } else {
-        scientific(&digits, exp)
-    };
+        scientific(&digits, exp, out)
+    }
+}
 
-    if neg { format!("-{out}") } else { out }
+/// The significant digits, held as the two runs `{:e}` writes them in.
+struct Digits<'a>(&'a str, &'a str);
+
+impl Digits<'_> {
+    fn len(&self) -> usize {
+        self.0.len() + self.1.len()
+    }
+
+    /// The digits from position `from` to `to`, written.
+    fn write<W: Write + ?Sized>(&self, from: usize, to: usize, out: &mut W) -> fmt::Result {
+        let n = self.0.len();
+        if from < n {
+            out.write_str(&self.0[from..to.min(n)])?;
+        }
+        if to > n {
+            out.write_str(&self.1[from.max(n) - n..to - n])?;
+        }
+        Ok(())
+    }
+}
+
+fn zeros<W: Write + ?Sized>(n: usize, out: &mut W) -> fmt::Result {
+    (0..n).try_for_each(|_| out.write_char('0'))
 }
 
 /// Lays significant digits out with a decimal point, where the first digit has
 /// place value `10^exp` (`exp` in `[-4, 16]`).
-fn fixed_point(digits: &str, exp: i32) -> String {
+fn fixed_point<W: Write + ?Sized>(digits: &Digits<'_>, exp: i32, out: &mut W) -> fmt::Result {
+    let n = digits.len();
     if exp >= 0 {
         let int_len = (exp + 1) as usize;
-        if digits.len() <= int_len {
-            format!("{digits}{}", "0".repeat(int_len - digits.len()))
+        if n <= int_len {
+            digits.write(0, n, out)?;
+            zeros(int_len - n, out)
         } else {
-            format!("{}.{}", &digits[..int_len], &digits[int_len..])
+            digits.write(0, int_len, out)?;
+            out.write_char('.')?;
+            digits.write(int_len, n, out)
         }
     } else {
         // exp < 0: `0.<(-exp-1) zeros><digits>`
-        format!("0.{}{digits}", "0".repeat((-exp - 1) as usize))
+        out.write_str("0.")?;
+        zeros((-exp - 1) as usize, out)?;
+        digits.write(0, n, out)
     }
 }
 
 /// Lays significant digits out as `d[.ddd]E±XX` with the .NET exponent conventions
 /// (uppercase `E`, mandatory sign, ≥2 zero-padded exponent digits).
-fn scientific(digits: &str, exp: i32) -> String {
-    let mant = if digits.len() == 1 {
-        digits.to_string()
-    } else {
-        format!("{}.{}", &digits[..1], &digits[1..])
-    };
-
+fn scientific<W: Write + ?Sized>(digits: &Digits<'_>, exp: i32, out: &mut W) -> fmt::Result {
+    let n = digits.len();
+    digits.write(0, 1, out)?;
+    if n > 1 {
+        out.write_char('.')?;
+        digits.write(1, n, out)?;
+    }
     let (sign, mag) = if exp < 0 { ('-', -exp) } else { ('+', exp) };
-    let exp_str = format!("{mag:02}"); // ≥2 digits, zero-padded
+    write!(out, "E{sign}{mag:02}") // ≥2 digits, zero-padded
+}
 
-    format!("{mant}E{sign}{exp_str}")
+/// A text of at most `N` bytes, written on the stack; a write past `N` fails.
+struct StackText<const N: usize> {
+    bytes: [u8; N],
+    len: usize,
+}
+
+impl<const N: usize> StackText<N> {
+    fn new() -> Self {
+        StackText {
+            bytes: [0; N],
+            len: 0,
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.len]).expect("only whole str slices are written")
+    }
+}
+
+impl<const N: usize> Write for StackText<N> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let end = self.len + s.len();
+        if end > N {
+            return Err(fmt::Error);
+        }
+        self.bytes[self.len..end].copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
