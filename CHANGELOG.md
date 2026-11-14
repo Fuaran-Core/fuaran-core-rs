@@ -3,6 +3,42 @@
 Every change to the crate's public API, newest first. Each entry names the Core commit the crate certifies against
 (`core-pin.json`), and whether that Core version is released.
 
+## 0.0.3-alpha.1 — 2026-11-14 — breaking
+
+Follows Core `c7d3013cfed62f2a03c2651098b5440b9ff8abcf`, version `0.43.0`, which is a **draft and not yet released**
+(the pin did not move). The capability decision path allocates nothing once the registry is built: `decide_named` and
+`dispatch`, allowed, needing approval, granted, parked or denied, held at zero allocations by `tests/capability_alloc.rs`
+on the embedded profile and the hosted one. Nothing a gate decides, a grant covers or the identity holds changed.
+DECISIONS.md D12 records the design and its measured costs.
+
+**Breaking:**
+
+- `CapabilityRegistry::decide_named` answers the deciding gate's name borrowed from the registry:
+  `Result<(&str, PolicyDecision), InvokeError>` (was `(String, PolicyDecision)`).
+- `PolicyDecision::Deny` carries shared text: `message: Arc<str>`, `alternatives: Arc<[Arc<str>]>` (were `String` and
+  `Vec<String>`). `PolicyDecision::deny` takes `impl Into<Arc<str>>`, and `deny_with` takes that and
+  `impl Into<Arc<[Arc<str>]>>` (a `Vec<Arc<str>>` or an array of them). A gate that builds its guidance once and clones
+  it into each denial allocates nothing when it denies.
+- `InvokeError::PolicyRefused` carries `policy: Arc<str>`, `reason: Arc<str>`, `allowed: Arc<[Arc<str>]>`, and
+  `InvokeError::ApprovalRequired` carries `policy: Arc<str>`: the gate's own name and guidance, shared, not copied.
+- `PolicyGate::new` and `PolicyGate::ignoring_context` take the name as `impl Into<Arc<str>>`; a `&str` or a `String`
+  still converts.
+
+**Added:**
+
+- `Capability::write_invocation_identity`: the invocation's identity written through a `core::fmt::Write`, building
+  nothing, for a host that writes it into a buffer of its own.
+- `Grant::covers_invocation`: whether a grant covers an invocation, compared with the identity as it is written, which
+  is what a dispatch now asks.
+
+**Changed, with no change to any answer:** `ValueSpace::validate` and argument validation decide membership on the
+value, without spelling it, and build a refusal only when they answer one; `invocation_identity` allocates exactly its
+answer; `invocation_key` writes the same fields. A tree argument's membership still reads its document (D12.2).
+
+**Certification:** unchanged counts: `capabilityLaws` 144 and `capabilityGateLaws` 41, each on the standard profile and
+again without `std`, the identity and a grant's coverage now answered in the written forms and asserted equal to the
+built ones.
+
 ## 0.0.2-alpha.1 — 2026-11-14 — breaking
 
 Follows Core `c7d3013cfed62f2a03c2651098b5440b9ff8abcf`, version `0.43.0`, which is a **draft and not yet released**

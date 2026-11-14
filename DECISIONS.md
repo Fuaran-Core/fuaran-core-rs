@@ -337,6 +337,7 @@ string before it is compared; `decide_named` clones the gate's name. A decision 
 validation that checks membership without spelling the value, an identity streamed against the grant's bytes (the
 bindings ordered without a vector, the number form written through `core::fmt::Write`), the gate's name borrowed, and a
 denial's guidance borrowed or static. That is a successor's to build: it changes the validation every seam shares.
+Phase 664 built it, and the table is at zero (D12).
 
 **D11.8 — the version says the API broke.** `0.0.1-alpha.1` becomes `0.0.2-alpha.1`. Under Cargo's rules a
 requirement on `0.0.1-alpha.1` admits a later `0.0.1` pre-release, so `0.0.1-alpha.2` would read as compatible; `0.0.2-*`
@@ -346,3 +347,139 @@ minor line nothing decided. `CHANGELOG.md` is new with this entry, and records t
 **D11.9 — what else the pin moved.** Core's Phase 568 added a `write` case to `skeletonDag` (writes on a DAG built from
 held nodes, one refused as a content-id collision) and a vector to `skeletonMerge`. The crate already answered both; the
 legs gained the reader and the count. The leg table of D8 gains `capability_gate.rs`.
+
+## D12 — 2026-11-14 — the decision path allocates nothing once the registry is built: membership on the value, the identity compared as it is written, names and guidance shared
+
+Phase 664 brings D11.7's table to zero. It changes nothing a gate decides, nothing a grant covers and no byte of the
+identity: the 41 gate-family vectors and the 144 capability vectors pass unchanged on both profiles, and a differential
+of the library before and after (the same random inputs to both; below) found no answer that differs.
+
+**D12.1 — went red first.** `tests/capability_alloc.rs` is a counting global allocator in its own test binary, counting
+on the measuring thread only (the harness's own threads allocate while a test runs), armed after the registry, the
+arguments and the grant are built and disarmed before the answer is dropped. Its first row is a known allocation of 16
+bytes, counted as one allocation of 16, so a zero is a measurement and not a counter that never ran. On the library as
+D11 left it, the leg failed with D11.7's counts exactly, on both profiles, debug and release alike: `decide_named` 4, 11
+and 27, `dispatch` 4 and 26, `invocation_identity` 7 and 16. It added three rows D11.7 did not measure: a dispatch parked
+for approval (11, the gate's name copied into the refusal), and a denial, named and dispatched (8 each, the name and the
+guidance copied). `run.ps1` runs it on the embedded profile; `cargo test --all-features` runs it on the hosted one.
+
+**D12.2 — membership is decided on the value.** `ValueSpace::validate` no longer spells the value to test it: an
+integer or a number is read and compared with its bounds (`read_int`, `read_float`, neither of which allocates), a
+length is counted, a member compared, any string admitted. The one place a numeric value is read and spelled is a
+private `respelled`, which `validate`, `canonical` and the identity all go through, so the three cannot disagree on what
+lies in a space. Argument validation builds a refusal only when it answers one: the repeated-address check scans the
+list for the first binding an earlier one binds (the head of `repeated_addrs`, not collected), the declared addresses
+an `UnknownArg` names are listed only for that refusal, and a hole's space is read where it is held, not cloned
+(`SigEntry::space` still answers an owned space for its callers). Every refusal names exactly what it named, with the
+same bytes: the capability family's 60 validation vectors and the differential below say so. A tree argument's
+membership is the one exception, kept: its document is read by the strict reader (`slot_kind_of`), which builds its
+value tree and holds its nesting on the heap (D10). Lost: a second, non-allocating reader for this one use, which would
+be a twin of the reader the Kani harnesses cover, outside those proofs, and would have to refuse a repeated member
+without remembering the members it has seen. A tree is now read once per argument where it was read twice. The gate
+family declares no tree hole and the table has no tree row; a host whose capabilities take trees allocates in
+validation, in proportion to the tree.
+
+**D12.3 — the identity is compared as it is written.** The identity is produced through `core::fmt::Write`
+(`Capability::write_invocation_identity`), field by field: the id, then each binding's address and its value, each field
+escaped and terminated as `canonical_fields` does it (the escape is now a writer, `hash::FieldBody`, and
+`canonical_field` writes through it), the value's canonical spelling written by `core::fmt` (an integer by its
+`Display`, a number by `number::write_finite_double`, the canonical number form laid out from a 32-byte stack buffer,
+which `format_finite_double` now writes through), and every value but a number written as sent, which is its canonical
+spelling where it lies in its space and its own where it does not, so a tree is never parsed here. The bindings are taken
+in address order by selection, each pass the least binding after the one last written, equal addresses in list order
+as the reference's stable sort keeps them: `O(n²)` comparisons of addresses and no vector. `Grant::covers_invocation`
+compares the grant's bytes with the identity as it is written and stops at the first that differs; `judge` asks it, and
+only when a gate answers `NeedsApproval`. `Grant::covers`, the comparison of two built identities, is unchanged.
+`invocation_key` writes the same fields into its pre-image, so the key and the identity still share one spelling (D11.4)
+and the identity's ordering and spelling are written once. Lost: sorting a stack array of indices, which bounds the
+number of bindings, or falls back to a heap past the bound; and comparing a hash of the identity, which is a digest the
+reference rejected (its D249.8). Certified against `invocationIdentity` and `grantCovers` byte for byte, on both profiles:
+the leg answers both in the written forms and asserts each agrees with the built one, including
+`gate-identity-out-of-address-order`, `gate-identity-integer-spelling`, `gate-identity-number-spelling`,
+`gate-identity-holds-the-separator`, `gate-identity-holds-the-escape` and `gate-grant-own-other-spelling`. Nothing in
+Core's shape forced an allocation: the identity as a canonical string, ordinal address order and the canonical number
+form are each producible a byte at a time.
+
+**D12.4 — names and guidance are shared, not copied.** A gate's name is `Arc<str>`, built once when the gate is built,
+and `decide_named` answers it borrowed from the registry, `(&str, PolicyDecision)`, `""` where every gate allows. A
+denial's guidance is `Arc<str>` and `Arc<[Arc<str>]>`, so a gate that builds its guidance when it is built hands every
+denial it makes a reference count; `InvokeError::PolicyRefused` and `ApprovalRequired` carry the gate's own name and
+guidance the same way. `Arc<str>` is the twin of the reference's immutable strings, and it costs an atomic increment
+where a copy cost an allocation. `PolicyDecision::deny` with no alternatives allocates nothing (`Arc<[T]>`'s `Default`
+shares one empty allocation, measured on rustc 1.97). Two alternatives lost. `Cow<'static, str>`: a literal costs
+nothing, but a gate built from data at run time (the conformance leg builds every gate from the file's table, as a host
+configured from a document would) copies its text into every denial, which is the copy this phase removes. A lifetime on
+`InvokeError`, borrowing the gate: every seam and every caller of the error would carry it, for a gain `Arc` already
+gives. Cost: `D11.3`'s atomics, already required; the text is built once when the gate is built, an allocation that
+belongs to building (D12.6). A gate that builds its guidance inside its decision still allocates there, on each denial;
+the type documents it.
+
+**D12.5 — what `invocation_identity` answers.** On every profile it answers the identity as a `String`, which is one
+allocation: the identity is written once to measure it and once into a string of exactly that capacity, so the row
+measures one allocation of the identity's own length (20 bytes for the family's three-binding call, 9 for one binding),
+asserted so. The crate requires `alloc` on every profile, so no profile lacks it; what the embedded profile is offered
+in its place is `write_invocation_identity` into a buffer of the host's own (the leg writes it into 64 bytes of stack,
+zero allocations), and `Grant::covers_invocation` for the decision itself. `grant` still mints a `Grant` holding the
+identity: minting an approval is the host's act at approval time, not part of a decision.
+
+**D12.6 — building a registry may allocate.** `register`, `with_gate`, `unregister` and `under` answer a new registry
+(D11.3's persistence), cloning its capabilities and gates; a gate is an `Arc` of its function, and its name and guidance
+are built with it. Measured: `with_gate` over the family's three capabilities, 27 allocations of 1,222 bytes (28 of
+1,219 before: the name is an `Arc<str>` where it was a `String`). A device host builds its registry once, when it
+starts, and decides with nothing allocated from then on, which is the claim the leg holds. Lost: building without a
+heap, which is D12.8's question.
+
+**D12.7 — the arguments stay owned pairs.** The decision path takes `&[(String, String)]`, as the gate's function does,
+the twin of the reference's `(string * string) list`. A host that receives a command as text and splits it into
+borrowed slices builds those strings before it calls, two allocations a binding, on its side of the call. Making the
+argument type generic (`AsRef<str>` pairs) changes every signature the capability surface has, the gate's function
+among them, and is a change of its own; it is not taken here, and it is the first thing a host with no allocation per
+command would ask for.
+
+**D12.8 — a host with no allocator at all.** After this phase what still needs a heap is the representation, not the
+decision: a declaration's id, holes and spaces (`String`, `Vec`), the registry's two vectors, a gate's `Arc`, a grant's
+identity, and the arguments (D12.7). Such a host would need declarations as static data (`&'static str`,
+`&'static [SigEntry]`), a registry over a fixed array, gates as `&'static` functions, grants written into its own
+buffers, and borrowed arguments: a second set of types beside every declaration type and the codec, which the reference
+does not have. It is not this crate's to offer now. A device that has no general-purpose heap can give the crate a fixed
+region as its global allocator for the build at start (the usual `no_std` arrangement), after which, by D12.1's leg,
+deciding takes nothing from it. Should a host appear that cannot do even that, it is a phase of its own, escalated, not
+assumed.
+
+**D12.9 — costs, measured.** x86_64 (`x86_64-pc-windows-msvc`), release, the library before (`8546e32`) and after on the
+same registry and arguments, in a scratch crate depending on both; time is a loop of 10⁶ calls around `black_box`, the
+best of five; stack is the depth a call overwrites in a stack painted with a pattern beforehand (an empty call reads 64
+bytes). Debug and release agree on every allocation count; the timings are release only.
+
+| Call | Time before → after (ns) | Stack before → after (bytes) |
+|---|---|---|
+| `decide_named`, allowed, one binding | 139 → 24 | 2352 → 1504 |
+| `decide_named`, needs approval, no grant, three bindings | 452 → 74 | 3728 → 2568 |
+| `decide_named`, needs approval, its own grant, three bindings | 1095 → 239 | 3904 → 2568 |
+| `dispatch`, granted, three bindings | 1066 → 234 | 4032 → 2792 |
+| `validate_args`, three bindings | 384 → 55 | 2992 → 2024 |
+| the grant check: `covers(&invocation_identity)` → `covers_invocation` | 628 → 159 | 3104 → 1464 |
+| `invocation_identity` (`String`), three bindings | 604 → 315 | 3104 → 1752 |
+| `invocation_key`, three bindings | 728 → 357 | 3072 → 2448 |
+| `invocation_identity`, sixteen bindings out of order | 1866 → 3516 | 2304 → 1072 |
+| `format_finite_double`, `1.5` / `1e300` / `0.30000000000000004` | 152 / 216 / 320 → 72 / 82 / 135 | 2160 / 2160 / 3008 → 1376 / 1376 / 2224 |
+
+The selection order is the one cost that grows: at sixteen bindings the identity takes 1.9 times as long as the sort
+did. In a decision it is bounded by the capability's holes, since validation refuses a repeated or an unknown address
+before a gate is asked, and a declaration's holes are few. The stack a decision takes is the formatting machinery's
+(`core::fmt` writing a number), about 2.5 KiB at most here, below what the allocating path took.
+
+**D12.10 — certified.** The final table, every row zero on the embedded profile and on the hosted one, in debug and in
+release, held by the gate: `decide_named` allowed, needing approval without a grant and with its own, and denied;
+`dispatch` allowed, granted, granted with its bindings out of address order and its numbers respelled, parked, and
+denied; the identity written to a stack buffer, one binding and three; `covers_invocation` with its own grant and with
+another; `covers` given the identity; a denial of shared guidance with no alternatives. The differential (a scratch
+crate, the two libraries side by side): 2,998,593 random finite doubles through `format_finite_double`, 400,000 random
+invocations over two capabilities that between them hold every hole kind and every space (identity, key,
+`validate_args`, `validate_args_all`, `canonical`, `validate`, and `covers_invocation` against the old identity, its
+extension and its truncation), and 200,000 named decisions and dispatches under two gates and three contexts: no
+answer differs, and the comparison was shown to fail when one side's arguments were cut.
+
+**D12.11 — the version.** The public registry and seam types moved (D12.4's field types, `decide_named`'s answer,
+`PolicyGate::new`'s name), so `0.0.2-alpha.1` becomes `0.0.3-alpha.1`, outside every requirement on `0.0.2-*`, by D11.8's
+rule. The pin does not move: Core `c7d3013` (`0.43.0`, a draft, not released).

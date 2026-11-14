@@ -45,6 +45,13 @@ labels and again under an integer context). Both capability families run on the 
 embedded one, the library built without `std`; the embedded run executes on the build host, and the
 `thumbv7em-none-eabihf` build is a build.
 
+On the embedded profile the capability decision path allocates nothing once the registry is built: `decide_named` and
+`dispatch` (allowed, needing approval, granted, parked or denied), the identity written into a host's own buffer, and a
+grant's coverage are held at zero allocations by `tests/capability_alloc.rs`, a counting allocator around each call
+(DECISIONS.md D12, which also says what still allocates: building a registry, reading a tree argument, and the owned
+argument pairs a caller presents). The crate requires `alloc` on every profile. This statement certifies against Core
+`c7d3013` (`0.43.0`, a draft, not released); the crate's version is `0.0.3-alpha.1` (CHANGELOG.md).
+
 ## Build
 
 ```powershell
@@ -52,7 +59,7 @@ pwsh ./run.ps1
 ```
 
 `run.ps1` checks formatting, runs clippy, builds, runs the tests (the conformance legs among
-them, and the capability legs a second time without `std`), and builds the `no_std` profile for
+them, and the capability legs and the allocation leg a second time without `std`), and builds the `no_std` profile for
 `thumbv7em-none-eabihf` (Cortex-M4F).
 
 ## Verification
