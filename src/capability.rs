@@ -1,25 +1,33 @@
 //! The invocable capability: a typed, registrable declaration of compute a host
-//! runs on a caller's behalf, the default-deny argument check that runs before
-//! any body, the effect-identity key a non-deterministic invocation is
-//! journalled and replayed under, the canonical declaration codec, and the
-//! id-ordered registry an agent enumerates.
+//! runs on a caller's behalf and of what it answers, the default-deny argument
+//! check that runs before any body, the effect-identity key a non-deterministic
+//! invocation is journalled and replayed under, the identity a grant is bound
+//! to, the canonical declaration codec, the id-ordered registry an agent
+//! enumerates with the gates it decides under, and the type check of a pipeline
+//! of calls.
 //!
-//! The twin of the reference's `Capability`, `CapabilityCodec` and
-//! `CapabilityRegistry` (`Fuaran.Core.Function`), together with the pieces of
-//! the signature surface they stand on — the value space (`Space`,
-//! `SpaceCodec`), the two-axis effect class (`Effect`, `EffectCodec`), the
-//! signature entry and its well-formedness check (`Signature.validate`).
-//! Certified against Core's `laws/capability-laws.json` (`tests/capability.rs`).
+//! The twin of the reference's `Capability`, `CapabilityCodec`,
+//! `CapabilityRegistry`, `Policy` and `CapabilityPipeline.typeCheck`
+//! (`Fuaran.Core.Function`), together with the pieces of the signature surface
+//! they stand on — the value space (`Space`, `SpaceCodec`), the two-axis effect
+//! class (`Effect`, `EffectCodec`), the signature entry and its well-formedness
+//! check (`Signature.validate`). Certified against Core's
+//! `laws/capability-laws.json` (`tests/capability.rs`) and
+//! `laws/capability-gate-laws.json` (`tests/capability_gate.rs`).
 //!
 //! The wire carries the declaration and a typed invocation, never the body:
-//! the core only validates, keys and round-trips. Running the body, and
-//! routing it by its [`Placement`], is the host's.
+//! the core validates, keys, decides and round-trips. Running the body, and
+//! routing it by its [`Placement`], is the host's; [`CapabilityRegistry::dispatch`]
+//! hands an admitted invocation to the host's performer and runs nothing else.
 
 use crate::decode::{self, Cursor, DecodeCode, DecodeError, quote_all};
-use crate::hash::keyed_by;
+use crate::hash::{canonical_fields, keyed_by};
 use crate::json::{JVal, JsonLimits, ordinal_cmp, render_canonical};
 use crate::number::format_finite_double;
 use crate::prelude::*;
+use crate::seam::{self, Reading, Slot};
+use alloc::borrow::Cow;
+use alloc::sync::Arc;
 
 // ─── The effect class ────────────────────────────────────────────────────────
 
@@ -335,6 +343,34 @@ impl ValueSpace {
             }
         }
     }
+
+    /// Does this space (the one required) admit every value `available` can
+    /// hold: the bounds compared, an integer range read as numbers where a number
+    /// is required, a string length measured in UTF-16 code units. The one space
+    /// relation a pipeline's edges and a call's declared output are checked by.
+    /// Twin of `Space.subsumes`.
+    pub fn subsumes(&self, available: &ValueSpace) -> bool {
+        use ValueSpace::*;
+        match (self, available) {
+            (IntRange(rl, rh), IntRange(al, ah)) => rl <= al && ah <= rh,
+            (FloatRange(rl, rh), FloatRange(al, ah)) => rl <= al && ah <= rh,
+            (FloatRange(rl, rh), IntRange(al, ah)) => {
+                *rl <= f64::from(*al) && f64::from(*ah) <= *rh
+            }
+            (StringLen(rl, rh), StringLen(al, ah)) => rl <= al && ah <= rh,
+            (StringLen(rl, rh), Enum(xs)) => xs.iter().all(|x| {
+                let len = utf16_len(x);
+                len >= i64::from(*rl) && len <= i64::from(*rh)
+            }),
+            (Enum(rs), Enum(xs)) => xs.iter().all(|x| rs.contains(x)),
+            (AnyString, IntRange(..) | FloatRange(..) | StringLen(..) | Enum(_) | AnyString) => {
+                true
+            }
+            (SlotTree(None), SlotTree(_)) => true,
+            (SlotTree(Some(rk)), SlotTree(Some(ak))) => rk == ak,
+            _ => false,
+        }
+    }
 }
 
 // ─── The signature ───────────────────────────────────────────────────────────
@@ -421,6 +457,11 @@ pub enum DeclarationFault {
     DuplicateHoleAddr { addr: String },
     /// A slot with a hole beneath it (raised by the witness-level check only).
     HoleUnderSlot { node: String },
+    /// The declared result ranges over a space that admits no value.
+    EmptyResult { space: ValueSpace },
+    /// The declared result has a bound that is not a finite number; the fault
+    /// carries nothing, because no JSON number spells the space.
+    NonFiniteResult,
 }
 
 impl DeclarationFault {
@@ -439,6 +480,13 @@ impl DeclarationFault {
             }
             DeclarationFault::HoleUnderSlot { node } => {
                 format!("the slot declared at node '{node}' has a hole beneath it")
+            }
+            DeclarationFault::EmptyResult { space } => format!(
+                "the declared result ranges over an empty space: {}",
+                space.describe()
+            ),
+            DeclarationFault::NonFiniteResult => {
+                "the declared result has a bound that is not a finite number".to_string()
             }
         }
     }
@@ -538,14 +586,49 @@ impl Placement {
     }
 }
 
-/// A registrable, invocable capability: its registry id, its signature and where
-/// its body runs. Twin of `Capability` (built by `Capability.create`).
+/// What a capability answers: a value in a space, or nothing. It is stated in
+/// the vocabulary a hole speaks, so a result that is a tree of a kind is
+/// `Value(SlotTree(Some(kind)))`. "Returns nothing" has this one spelling, and
+/// on the wire one document, `{"$type":"nothing"}`. Twin of `Returns`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Returns {
+    /// The capability answers no value: a call made for its effect.
+    Nothing,
+    /// The capability answers a value in this space, held to the well-formedness
+    /// a hole's space is held to ([`DeclarationFault::EmptyResult`],
+    /// [`DeclarationFault::NonFiniteResult`]).
+    Value(ValueSpace),
+}
+
+impl Returns {
+    /// Why the declared result is not well-formed; `Nothing` always is. Twin of
+    /// `Capability.resultFault`.
+    fn fault(&self) -> Option<DeclarationFault> {
+        match self {
+            Returns::Nothing => None,
+            Returns::Value(space) => match space.well_formed() {
+                Ok(()) => None,
+                Err(SpaceFault::Empty) => Some(DeclarationFault::EmptyResult {
+                    space: space.clone(),
+                }),
+                Err(SpaceFault::NonFinite) => Some(DeclarationFault::NonFiniteResult),
+            },
+        }
+    }
+}
+
+/// A registrable, invocable capability: its registry id, its signature, what it
+/// answers and where its body runs. Twin of `Capability` (built by
+/// `Capability.create`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capability {
     /// The registry key.
     pub id: String,
     /// The arguments it takes and the effect it declares.
     pub signature: Signature,
+    /// What it answers — the one statement of it: a pipeline call's declared
+    /// output is checked against it.
+    pub result: Returns,
     /// Where its body runs.
     pub placement: Placement,
 }
@@ -577,13 +660,15 @@ pub enum InvokeError {
     IllFormedCapability { id: String, fault: DeclarationFault },
     /// The invocation binds this address twice.
     DuplicateArg { addr: String },
-    /// A registry policy denied the invocation.
+    /// A registry gate denied the invocation: the deciding gate, the denial's
+    /// message and the alternatives it names. No grant lifts it.
     PolicyRefused {
         policy: String,
         reason: String,
         allowed: Vec<String>,
     },
-    /// A registry policy requires an approval first.
+    /// A registry gate requires an approval first, and no grant presented was
+    /// for exactly this invocation.
     ApprovalRequired { policy: String },
 }
 
@@ -657,8 +742,11 @@ impl InvokeError {
 
 /// THE admission gate both registries and the declaration reader run: totality
 /// first (`NonTotalCapability`, naming every non-total entry), then
-/// well-formedness (`IllFormedCapability`). `None` admits. Twin of `Capability.admissionOf`.
-pub fn admission_of(id: &str, sg: &Signature) -> Option<InvokeError> {
+/// well-formedness (`IllFormedCapability`): the signature's, then the declared
+/// result's (`EmptyResult`, `NonFiniteResult`). `None` admits. Twin of
+/// `Capability.admissionOf`; with `&Returns::Nothing` it is the gate over the
+/// signature alone (`Capability.signatureAdmissionOf`).
+pub fn admission_of(id: &str, sg: &Signature, result: &Returns) -> Option<InvokeError> {
     let non_total: Vec<String> = sg
         .holes
         .iter()
@@ -673,6 +761,7 @@ pub fn admission_of(id: &str, sg: &Signature) -> Option<InvokeError> {
     }
     sg.validate()
         .err()
+        .or_else(|| result.fault())
         .map(|fault| InvokeError::IllFormedCapability {
             id: id.to_string(),
             fault,
@@ -680,8 +769,9 @@ pub fn admission_of(id: &str, sg: &Signature) -> Option<InvokeError> {
 }
 
 /// Every address an argument list binds more than once, at each repeat, in list
-/// order. Twin of `Capability.repeatedAddrs`.
-pub fn repeated_addrs(args: &[(String, String)]) -> Vec<String> {
+/// order, whatever the bound values are. Twin of `Capability.repeatedAddrs`, which
+/// the argument check and the pipeline type check both run.
+pub fn repeated_addrs<V>(args: &[(String, V)]) -> Vec<String> {
     let mut seen: Vec<&str> = Vec::new();
     let mut dups = Vec::new();
     for (addr, _) in args {
@@ -694,14 +784,22 @@ pub fn repeated_addrs(args: &[(String, String)]) -> Vec<String> {
     dups
 }
 
-// ─── The capture key ─────────────────────────────────────────────────────────
+// ─── The capture key and the invocation's identity ───────────────────────────
 
 impl Capability {
-    /// Build a capability. Twin of `Capability.create`.
-    pub fn new(id: impl Into<String>, signature: Signature, placement: Placement) -> Capability {
+    /// Build a capability. There is no capability without a declared result:
+    /// [`Returns::Nothing`] is how one that answers no value says so. Twin of
+    /// `Capability.create`.
+    pub fn new(
+        id: impl Into<String>,
+        signature: Signature,
+        placement: Placement,
+        result: Returns,
+    ) -> Capability {
         Capability {
             id: id.into(),
             signature,
+            result,
             placement,
         }
     }
@@ -722,26 +820,63 @@ impl Capability {
         self.signature.holes.iter().find(|h| h.addr == addr)
     }
 
-    /// The effect-identity key a non-deterministic invocation is journalled and
-    /// replayed under: the id, `#`, and the FNV-1a of the canonical pre-image of
-    /// the addr-sorted (ordinal) bindings, two fields each, every value in its
-    /// canonical spelling in its hole's space where it lies there. Twin of
-    /// `Capability.invocationKey`.
-    pub fn invocation_key(&self, args: &[(String, String)]) -> String {
-        let mut spelled: Vec<(&str, String)> = args
+    /// The bindings of an invocation's canonical pre-image: each address with
+    /// its value's canonical spelling in its hole's space where it lies there,
+    /// else its own spelling, sorted by address (ordinal, stable as the
+    /// reference's `List.sortBy` is). Twin of `Capability.bindingFields`; the key
+    /// hashes their fields and the identity keeps them.
+    fn spelled_bindings<'a>(&self, args: &'a [(String, String)]) -> Vec<(&'a str, Cow<'a, str>)> {
+        let mut spelled: Vec<(&str, Cow<'_, str>)> = args
             .iter()
             .map(|(a, v)| {
                 let canon = self
                     .hole(a)
                     .and_then(SigEntry::space)
                     .and_then(|sp| sp.canonical(v));
-                (a.as_str(), canon.unwrap_or_else(|| v.clone()))
+                (
+                    a.as_str(),
+                    canon.map_or(Cow::Borrowed(v.as_str()), Cow::Owned),
+                )
             })
             .collect();
-        // Stable, as the reference's `List.sortBy` is.
         spelled.sort_by(|x, y| ordinal_cmp(x.0, y.0));
-        let fields: Vec<&str> = spelled.iter().flat_map(|(a, v)| [*a, v.as_str()]).collect();
+        spelled
+    }
+
+    /// The effect-identity key a non-deterministic invocation is journalled and
+    /// replayed under: the id, `#`, and the FNV-1a of the canonical pre-image of
+    /// the addr-sorted (ordinal) bindings, two fields each, every value in its
+    /// canonical spelling in its hole's space where it lies there. A 32-bit cache
+    /// hash: never what a grant is bound to ([`Capability::invocation_identity`]).
+    /// Twin of `Capability.invocationKey`.
+    pub fn invocation_key(&self, args: &[(String, String)]) -> String {
+        let bindings = self.spelled_bindings(args);
+        let fields: Vec<&str> = bindings
+            .iter()
+            .flat_map(|(a, v)| [*a, v.as_ref()])
+            .collect();
         keyed_by(&self.id, &fields)
+    }
+
+    /// The IDENTITY of one invocation, what a [`Grant`] is for: the capability id,
+    /// then the fields the key hashes, as one canonical pre-image
+    /// ([`canonical_fields`]: every U+0010 and U+0001 a field holds preceded by
+    /// U+0010, each field terminated by U+0001), with NO hash taken. Injective:
+    /// two invocations share an identity only when they name one capability and
+    /// carry the same canonical bindings. Compared as bytes, never parsed. Twin of
+    /// `Capability.invocationPreimage`.
+    pub fn invocation_identity(&self, args: &[(String, String)]) -> String {
+        let bindings = self.spelled_bindings(args);
+        let fields: Vec<&str> = core::iter::once(self.id.as_str())
+            .chain(bindings.iter().flat_map(|(a, v)| [*a, v.as_ref()]))
+            .collect();
+        canonical_fields(&fields)
+    }
+
+    /// The grant for exactly this invocation: what a host mints when an approval
+    /// is given for a previewed invocation. Twin of `Capability.grant`.
+    pub fn grant(&self, args: &[(String, String)]) -> Grant {
+        Grant::of_invocation(self.invocation_identity(args))
     }
 
     /// The refusal one argument earns on its own. Twin of `Capability.argFault`.
@@ -925,6 +1060,16 @@ fn signature_to_json(sg: &Signature) -> JVal {
     ])
 }
 
+/// A declared result as its wire document: a value's space as the space document
+/// itself, and "returns nothing" as `{"$type":"nothing"}`, a tag no value space
+/// uses. Twin of `CapabilityCodec.resultJson`.
+pub fn result_to_json(r: &Returns) -> JVal {
+    match r {
+        Returns::Nothing => typed("nothing", vec![]),
+        Returns::Value(space) => space_to_json(space),
+    }
+}
+
 /// A placement as its `$type`-tagged document. Twin of `CapabilitySeamCodec.encodePlacement`.
 pub fn placement_to_json(p: Placement) -> JVal {
     match p {
@@ -941,6 +1086,7 @@ impl Capability {
             vec![
                 ("id", jstr(&self.id)),
                 ("signature", signature_to_json(&self.signature)),
+                ("result", result_to_json(&self.result)),
                 ("determinism", JVal::Str(self.determinism_tag())),
                 ("placement", placement_to_json(self.placement)),
             ],
@@ -955,12 +1101,18 @@ impl Capability {
         render_canonical(&self.encode_json())
     }
 
-    /// The guarded encode: refuses a declaration with a non-finite bound rather
-    /// than write bytes the reader refuses; `Ok` is exactly [`Capability::encode`].
-    /// Twin of `CapabilityCodec.tryEncode`.
+    /// The guarded encode: refuses a declaration with a non-finite bound, in a
+    /// hole's space or in the declared result's, rather than write bytes the
+    /// reader refuses; `Ok` is exactly [`Capability::encode`]. Twin of
+    /// `CapabilityCodec.tryEncode`.
     pub fn try_encode(&self) -> Result<String, String> {
-        for e in &self.signature.holes {
-            if let Some(ValueSpace::FloatRange(lo, hi)) = e.space() {
+        let result = match &self.result {
+            Returns::Value(space) => Some(space.clone()),
+            Returns::Nothing => None,
+        };
+        let spaces = self.signature.holes.iter().map(SigEntry::space);
+        for space in spaces.chain([result]) {
+            if let Some(ValueSpace::FloatRange(lo, hi)) = space {
                 for b in [lo, hi] {
                     if !b.is_finite() {
                         return Err(format!(
@@ -984,19 +1136,29 @@ impl Capability {
     /// Read a declaration leniently (an unknown member is read past): its
     /// `"$type"` must be `capability`; its signature must pass the admission gate
     /// ([`admission_of`], refused `OutOfRange` at `signature.holes` with the
-    /// registry's sentence); and its wire `determinism` must equal the label its
-    /// signature's effect derives (`OutOfRange` at `determinism`). Twin of
-    /// `CapabilityCodec.decodeJson`.
+    /// registry's sentence); its `result` is REQUIRED (absent is `MissingField` at
+    /// `result`) and held to the same gate (`OutOfRange` at `result`), after the
+    /// signature, so a signature fault is answered first; and its wire
+    /// `determinism` must equal the label its signature's effect derives
+    /// (`OutOfRange` at `determinism`). Twin of `CapabilityCodec.decodeJson`.
     pub fn decode_value(c: &Cursor<'_>) -> Result<Capability, DecodeError> {
+        let refused = |at: &Cursor<'_>, e: InvokeError| {
+            at.fail(
+                DecodeCode::OutOfRange,
+                format!("a declaration the registries admit: {}", e.describe()),
+            )
+        };
         c.tag("$type", &["capability"])?;
         let id = c.field("id")?.string()?.to_string();
         let sig_at = c.field("signature")?;
         let signature = signature_of(&sig_at)?;
-        if let Some(e) = admission_of(&id, &signature) {
-            return Err(sig_at.field("holes")?.fail(
-                DecodeCode::OutOfRange,
-                format!("a declaration the registries admit: {}", e.describe()),
-            ));
+        if let Some(e) = admission_of(&id, &signature, &Returns::Nothing) {
+            return Err(refused(&sig_at.field("holes")?, e));
+        }
+        let result_at = c.field("result")?;
+        let result = result_of(&result_at)?;
+        if let Some(e) = admission_of(&id, &signature, &result) {
+            return Err(refused(&result_at, e));
         }
         let expected = signature.effect.determinism.tag();
         let det_at = c.field("determinism")?;
@@ -1013,6 +1175,7 @@ impl Capability {
         Ok(Capability {
             id,
             signature,
+            result,
             placement,
         })
     }
@@ -1033,20 +1196,20 @@ fn one_of<'a, T: Copy>(at: &Cursor<'a>, table: &[(&str, T)], what: &str) -> Resu
         })
 }
 
+/// The value spaces' `"$type"` tags, in the reference's case order.
+const SPACE_TAGS: [&str; 6] = [
+    "intRange",
+    "floatRange",
+    "stringLen",
+    "enum",
+    "anyString",
+    "slotTree",
+];
+
 /// Read a value space from its wire document, dispatched on `"$type"`. Twin of
 /// `SpaceCodec.decoder`.
 pub fn space_of(c: &Cursor<'_>) -> Result<ValueSpace, DecodeError> {
-    let tag = c.tag(
-        "$type",
-        &[
-            "intRange",
-            "floatRange",
-            "stringLen",
-            "enum",
-            "anyString",
-            "slotTree",
-        ],
-    )?;
+    let tag = c.tag("$type", &SPACE_TAGS)?;
     Ok(match tag {
         "intRange" => ValueSpace::IntRange(c.field("min")?.int()?, c.field("max")?.int()?),
         "floatRange" => ValueSpace::FloatRange(c.field("min")?.float()?, c.field("max")?.float()?),
@@ -1064,6 +1227,19 @@ pub fn space_of(c: &Cursor<'_>) -> Result<ValueSpace, DecodeError> {
             None => None,
         }),
     })
+}
+
+/// Read a declared result as [`result_to_json`] writes it, dispatched on
+/// `"$type"`: `nothing`, or a value space's tag read by [`space_of`]. Any other
+/// tag is `UnknownTag`; JSON `null` is no spelling of "nothing". Twin of
+/// `CapabilityCodec.resultOf`.
+pub fn result_of(c: &Cursor<'_>) -> Result<Returns, DecodeError> {
+    let mut known = SPACE_TAGS.to_vec();
+    known.push("nothing");
+    match c.tag("$type", &known)? {
+        "nothing" => Ok(Returns::Nothing),
+        _ => space_of(c).map(Returns::Value),
+    }
 }
 
 /// Read an effect class. Twin of `EffectCodec.decoder`.
@@ -1176,21 +1352,229 @@ pub fn encode_invocation(capability_id: &str, args: &[(String, String)]) -> Stri
     ))
 }
 
+// ─── The gate: its decision, its decision context and the grant ─────────────
+
+/// What a gate decides for one invocation under one context. Ordered by how much
+/// it refuses, `Allow < NeedsApproval < Deny`; a registry's decision is the join
+/// (the most refusing) over its gates, and a denial is GUIDANCE: the message and
+/// the alternatives a refused caller may take instead. Twin of `PolicyDecision`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PolicyDecision {
+    /// The invocation may proceed now.
+    Allow,
+    /// The invocation must be approved first: a grant for exactly it lifts this
+    /// to `Allow`.
+    NeedsApproval,
+    /// The invocation is refused. No grant lifts it.
+    Deny {
+        message: String,
+        alternatives: Vec<String>,
+    },
+}
+
+impl PolicyDecision {
+    /// A denial with `reason` and no alternatives. Twin of `PolicyDecision.deny`.
+    pub fn deny(reason: impl Into<String>) -> PolicyDecision {
+        PolicyDecision::deny_with(reason, Vec::new())
+    }
+
+    /// A denial with `reason` and the alternatives the caller may take instead.
+    /// Twin of `PolicyDecision.denyWith`.
+    pub fn deny_with(reason: impl Into<String>, alternatives: Vec<String>) -> PolicyDecision {
+        PolicyDecision::Deny {
+            message: reason.into(),
+            alternatives,
+        }
+    }
+
+    /// The decision's place in `Allow < NeedsApproval < Deny`. Twin of
+    /// `PolicyDecision.rank`.
+    pub fn rank(&self) -> u8 {
+        match self {
+            PolicyDecision::Allow => 0,
+            PolicyDecision::NeedsApproval => 1,
+            PolicyDecision::Deny { .. } => 2,
+        }
+    }
+
+    /// The decision once an approval is read: `NeedsApproval` becomes `Allow`
+    /// when `granted`, and every other decision is returned as it is, so no grant
+    /// lifts a `Deny` or changes an `Allow`. Twin of `PolicyDecision.lifted`.
+    pub fn lifted(self, granted: bool) -> PolicyDecision {
+        match self {
+            PolicyDecision::NeedsApproval if granted => PolicyDecision::Allow,
+            d => d,
+        }
+    }
+}
+
+/// An approval presented at a dispatch, bound to ONE invocation by that
+/// invocation's identity ([`Capability::invocation_identity`]), never by its
+/// hashed capture key. The core checks one thing: that the identity it carries
+/// is this invocation's, byte for byte. Who minted it, whether it was spent,
+/// when it expires are the host's, as facts it puts in the decision context,
+/// where a gate reads them and can answer `Deny`. Twin of `Grant`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Grant {
+    invocation: String,
+}
+
+impl Grant {
+    /// The grant for the invocation `invocation` names. Twin of `Grant.ofInvocation`.
+    pub fn of_invocation(invocation: impl Into<String>) -> Grant {
+        Grant {
+            invocation: invocation.into(),
+        }
+    }
+
+    /// The identity of the invocation the grant is for.
+    pub fn invocation(&self) -> &str {
+        &self.invocation
+    }
+
+    /// Is the grant for exactly the invocation `identity` names: the two
+    /// identities equal as bytes, never normalised or parsed. Twin of `Grant.covers`.
+    pub fn covers(&self, identity: &str) -> bool {
+        self.invocation.as_bytes() == identity.as_bytes()
+    }
+}
+
+/// A gate's decision function: the decision context, the resolved declaration
+/// and the validated arguments. Total and free of side effects (a registry is
+/// asked to decide without dispatching), so it is shareable across threads.
+type Decide<C> = dyn Fn(&C, &Capability, &[(String, String)]) -> PolicyDecision + Send + Sync;
+
+/// One named gate over a registry's invocations: its name, carried by every
+/// refusal it makes, and its decision under a context `C`. The context is the
+/// host's type; the core names nothing it holds. Twin of `PolicyGate`.
+pub struct PolicyGate<C> {
+    policy: String,
+    decide: Arc<Decide<C>>,
+}
+
+impl<C> PolicyGate<C> {
+    /// A gate named `policy` deciding with `decide`.
+    pub fn new(
+        policy: impl Into<String>,
+        decide: impl Fn(&C, &Capability, &[(String, String)]) -> PolicyDecision + Send + Sync + 'static,
+    ) -> PolicyGate<C> {
+        PolicyGate {
+            policy: policy.into(),
+            decide: Arc::new(decide),
+        }
+    }
+
+    /// A gate that decides on the declaration and the arguments alone, the same
+    /// under every context. Twin of `PolicyGate.ignoringContext`.
+    pub fn ignoring_context(
+        policy: impl Into<String>,
+        decide: impl Fn(&Capability, &[(String, String)]) -> PolicyDecision + Send + Sync + 'static,
+    ) -> PolicyGate<C> {
+        PolicyGate::new(
+            policy,
+            move |_: &C, c: &Capability, a: &[(String, String)]| decide(c, a),
+        )
+    }
+
+    /// The gate's name.
+    pub fn policy(&self) -> &str {
+        &self.policy
+    }
+
+    /// The gate's decision for one invocation under `ctx`.
+    pub fn decide(&self, ctx: &C, c: &Capability, args: &[(String, String)]) -> PolicyDecision {
+        (self.decide)(ctx, c, args)
+    }
+}
+
+impl<C> Clone for PolicyGate<C> {
+    fn clone(&self) -> Self {
+        PolicyGate {
+            policy: self.policy.clone(),
+            decide: Arc::clone(&self.decide),
+        }
+    }
+}
+
+impl<C> core::fmt::Debug for PolicyGate<C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PolicyGate")
+            .field("policy", &self.policy)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Equal when both have the same name and the SAME decision function: a
+/// function has no extensional equality, so it is identity of the function.
+impl<C> PartialEq for PolicyGate<C> {
+    fn eq(&self, other: &Self) -> bool {
+        self.policy == other.policy && Arc::ptr_eq(&self.decide, &other.decide)
+    }
+}
+
 // ─── The registry ────────────────────────────────────────────────────────────
 
 /// A typed capability registry: the discovery surface an agent enumerates,
-/// default-deny on dispatch. Opaque: [`CapabilityRegistry::register`] and its
-/// admission gate are the only way a capability gets in. Twin of
-/// `CapabilityRegistry` (without its policy gates).
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct CapabilityRegistry {
+/// default-deny on dispatch, and the gates its invocations are decided by under
+/// a decision context `C` (`()` for a registry that needs none). Opaque:
+/// [`CapabilityRegistry::register`] and its admission gate are the only way a
+/// capability gets in, and [`CapabilityRegistry::with_gate`] the only way a gate
+/// does. Twin of `CapabilityRegistry<'Ctx>` (its denial observers are not
+/// carried: a refusal is the dispatch's `Err`).
+pub struct CapabilityRegistry<C = ()> {
     /// Held in ordinal id order, the order `enumerate` answers in.
     entries: Vec<Capability>,
+    /// In the order they run.
+    gates: Vec<PolicyGate<C>>,
 }
 
-impl CapabilityRegistry {
-    /// The registry with no capabilities. Twin of `CapabilityRegistry.empty`.
-    pub fn new() -> CapabilityRegistry {
+impl<C> Clone for CapabilityRegistry<C> {
+    fn clone(&self) -> Self {
+        CapabilityRegistry {
+            entries: self.entries.clone(),
+            gates: self.gates.clone(),
+        }
+    }
+}
+
+impl<C> Default for CapabilityRegistry<C> {
+    fn default() -> Self {
+        CapabilityRegistry {
+            entries: Vec::new(),
+            gates: Vec::new(),
+        }
+    }
+}
+
+impl<C> core::fmt::Debug for CapabilityRegistry<C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CapabilityRegistry")
+            .field("entries", &self.entries)
+            .field("gates", &self.gates)
+            .finish()
+    }
+}
+
+/// Equal when both hold the same capabilities and the same gates in the same
+/// order (each by name and by identity of its decision function).
+impl<C> PartialEq for CapabilityRegistry<C> {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries && self.gates == other.gates
+    }
+}
+
+impl CapabilityRegistry<()> {
+    /// The registry with no capabilities and no gates, deciding under no context.
+    /// Twin of `CapabilityRegistry.empty` at `unit`.
+    pub fn new() -> CapabilityRegistry<()> {
+        CapabilityRegistry::empty()
+    }
+}
+
+impl<C> CapabilityRegistry<C> {
+    /// The registry with no capabilities and no gates, deciding under contexts of
+    /// type `C`. Twin of `CapabilityRegistry.empty`.
+    pub fn empty() -> CapabilityRegistry<C> {
         CapabilityRegistry::default()
     }
 
@@ -1199,13 +1583,14 @@ impl CapabilityRegistry {
     }
 
     /// Register a capability: a held id is `DuplicateCapability` (checked first),
-    /// and the admission gate's refusal otherwise; the registry is unchanged on a
-    /// refusal. Twin of `CapabilityRegistry.register`.
-    pub fn register(&self, c: Capability) -> Result<CapabilityRegistry, InvokeError> {
+    /// and the admission gate's refusal otherwise — the signature's, then the
+    /// declared result's; the registry is unchanged on a refusal. Twin of
+    /// `CapabilityRegistry.register`.
+    pub fn register(&self, c: Capability) -> Result<CapabilityRegistry<C>, InvokeError> {
         match self.position(&c.id) {
             Ok(_) => Err(InvokeError::DuplicateCapability { id: c.id }),
             Err(at) => {
-                if let Some(e) = admission_of(&c.id, &c.signature) {
+                if let Some(e) = admission_of(&c.id, &c.signature, &c.result) {
                     return Err(e);
                 }
                 let mut next = self.clone();
@@ -1233,7 +1618,7 @@ impl CapabilityRegistry {
 
     /// Remove the capability under `id`; an id not held is `NoSuchCapability`
     /// naming every held id. Twin of `CapabilityRegistry.unregister`.
-    pub fn unregister(&self, id: &str) -> Result<CapabilityRegistry, InvokeError> {
+    pub fn unregister(&self, id: &str) -> Result<CapabilityRegistry<C>, InvokeError> {
         match self.position(id) {
             Ok(i) => {
                 let mut next = self.clone();
@@ -1247,9 +1632,23 @@ impl CapabilityRegistry {
         }
     }
 
+    /// The registry with `gate` added after its gates. Adding is the only verb:
+    /// the decision is the join over every gate, so the result refuses everything
+    /// this one refused, and possibly more. Twin of `CapabilityRegistry.withGate`.
+    pub fn with_gate(&self, gate: PolicyGate<C>) -> CapabilityRegistry<C> {
+        let mut next = self.clone();
+        next.gates.push(gate);
+        next
+    }
+
+    /// The gate names, in the order they run. Twin of `CapabilityRegistry.gates`.
+    pub fn gates(&self) -> Vec<&str> {
+        self.gates.iter().map(PolicyGate::policy).collect()
+    }
+
     /// Resolve `id` and validate `args` — the default-deny half of dispatch that
-    /// runs before any body: an id not held is `NoSuchCapability`, and the
-    /// arguments are held to [`Capability::validate_args`].
+    /// runs before any gate and any body: an id not held is `NoSuchCapability`,
+    /// and the arguments are held to [`Capability::validate_args`].
     pub fn resolve(&self, id: &str, args: &[(String, String)]) -> Result<&Capability, InvokeError> {
         let c = self
             .try_find(id)
@@ -1259,5 +1658,479 @@ impl CapabilityRegistry {
             })?;
         c.validate_args(args)?;
         Ok(c)
+    }
+
+    /// The ONE judgement the named read and every dispatch share: resolve,
+    /// validate, then the gates' join under `ctx` with the deciding gate's name
+    /// (the FIRST gate of the most refusing rank, `""` when every gate allows),
+    /// a `NeedsApproval` lifted to `Allow` when `grant` is for exactly this
+    /// invocation, its name kept. Twin of `KeyedRegistry.judge` over
+    /// `RegistryPolicy.decideGranted`.
+    fn judge(
+        &self,
+        ctx: &C,
+        grant: Option<&Grant>,
+        id: &str,
+        args: &[(String, String)],
+    ) -> Result<(&Capability, &str, PolicyDecision), InvokeError> {
+        let c = self.resolve(id, args)?;
+        let mut name = "";
+        let mut decision = PolicyDecision::Allow;
+        for g in &self.gates {
+            let d = g.decide(ctx, c, args);
+            if d.rank() > decision.rank() {
+                name = &g.policy;
+                decision = d;
+            }
+        }
+        // The identity is rendered only when a gate asks for an approval.
+        if decision == PolicyDecision::NeedsApproval {
+            let granted = grant.is_some_and(|g| g.covers(&c.invocation_identity(args)));
+            decision = decision.lifted(granted);
+        }
+        Ok((c, name, decision))
+    }
+
+    /// The registry's NAMED decision for an invocation, without dispatching it:
+    /// `Ok` of the deciding gate's name and the decision (a `NeedsApproval` the
+    /// grant is for lifted to `Allow`, the name kept, so it still says whose
+    /// approval was answered; no grant lifts a `Deny`), or, where no gate decided,
+    /// the refusal a dispatch gives: `NoSuchCapability` naming the held ids, or
+    /// the validation refusal. Advisory: [`CapabilityRegistry::dispatch`] judges
+    /// again, through the same function, and is authoritative. Twin of
+    /// `CapabilityRegistry.decideNamed`.
+    pub fn decide_named(
+        &self,
+        ctx: &C,
+        grant: Option<&Grant>,
+        id: &str,
+        args: &[(String, String)],
+    ) -> Result<(String, PolicyDecision), InvokeError> {
+        self.judge(ctx, grant, id, args)
+            .map(|(_, name, d)| (name.to_string(), d))
+    }
+
+    /// Dispatch an invocation: resolve the id (default-deny — an id the registry
+    /// does not hold is `NoSuchCapability`, whatever is presented), validate the
+    /// arguments, decide under `ctx` (a `Deny` is `PolicyRefused`, whatever is
+    /// presented; a `NeedsApproval` is `ApprovalRequired` unless `grant` is for
+    /// exactly this invocation), and only then hand the resolved capability to
+    /// `perform`, the host's body, exactly once; its refusal is the dispatch's. A
+    /// refused dispatch never runs `perform`. Twin of `CapabilityRegistry.dispatch`.
+    pub fn dispatch<T>(
+        &self,
+        ctx: &C,
+        grant: Option<&Grant>,
+        id: &str,
+        args: &[(String, String)],
+        perform: impl FnOnce(&Capability) -> Result<T, InvokeError>,
+    ) -> Result<T, InvokeError> {
+        let (c, name, decision) = self.judge(ctx, grant, id, args)?;
+        match decision {
+            PolicyDecision::Allow => perform(c),
+            PolicyDecision::NeedsApproval => Err(InvokeError::ApprovalRequired {
+                policy: name.to_string(),
+            }),
+            PolicyDecision::Deny {
+                message,
+                alternatives,
+            } => Err(InvokeError::PolicyRefused {
+                policy: name.to_string(),
+                reason: message,
+                allowed: alternatives,
+            }),
+        }
+    }
+
+    /// The registry as the one context `ctx` sees it: every gate decides as it
+    /// does under `ctx`, and the result takes no context. It fixes a context and
+    /// loosens nothing: the view a host hands a caller that must not choose its
+    /// own context. Twin of `CapabilityRegistry.under`.
+    pub fn under(&self, ctx: C) -> CapabilityRegistry<()>
+    where
+        C: Send + Sync + 'static,
+    {
+        let ctx = Arc::new(ctx);
+        let gates = self
+            .gates
+            .iter()
+            .map(|g| {
+                let (ctx, decide) = (Arc::clone(&ctx), Arc::clone(&g.decide));
+                PolicyGate::new(
+                    g.policy.clone(),
+                    move |_: &(), c: &Capability, a: &[(String, String)]| decide(&ctx, c, a),
+                )
+            })
+            .collect();
+        CapabilityRegistry {
+            entries: self.entries.clone(),
+            gates,
+        }
+    }
+}
+
+// ─── The pipeline type check ─────────────────────────────────────────────────
+
+/// Where an invoke node's argument comes from. Twin of `ArgSource`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArgSource {
+    /// A string value, as declared; wire tag `literal`.
+    Literal(String),
+    /// The output of the named node; wire tag `fromNode`.
+    FromNode(String),
+}
+
+/// One node of a pipeline. Twin of `PipelineNode`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PipelineNode {
+    /// A value the host supplies, under `data_ref`; wire tag `source`.
+    Source {
+        id: String,
+        data_ref: String,
+        output_type: ValueSpace,
+    },
+    /// A call of a capability; its declared output is checked against the
+    /// capability's declared result; wire tag `invoke`.
+    Invoke {
+        id: String,
+        capability_id: String,
+        output_type: ValueSpace,
+        args: Vec<(String, ArgSource)>,
+    },
+}
+
+impl PipelineNode {
+    /// The node's id. Twin of `CapabilityPipeline.nodeId`.
+    pub fn id(&self) -> &str {
+        match self {
+            PipelineNode::Source { id, .. } | PipelineNode::Invoke { id, .. } => id,
+        }
+    }
+
+    /// The node's declared output space.
+    pub fn output_type(&self) -> &ValueSpace {
+        match self {
+            PipelineNode::Source { output_type, .. } | PipelineNode::Invoke { output_type, .. } => {
+                output_type
+            }
+        }
+    }
+
+    /// The ids an invoke node's `FromNode` edges name, in argument order.
+    fn upstreams(&self) -> Vec<&str> {
+        match self {
+            PipelineNode::Source { .. } => Vec::new(),
+            PipelineNode::Invoke { args, .. } => args
+                .iter()
+                .filter_map(|(_, src)| match src {
+                    ArgSource::FromNode(up) => Some(up.as_str()),
+                    ArgSource::Literal(_) => None,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A dataflow of capability calls, its nodes in declaration order. Twin of
+/// `CapabilityPipeline`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapabilityPipeline {
+    pub nodes: Vec<PipelineNode>,
+}
+
+/// Why a pipeline does not type-check. Twin of `PipelineError`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PipelineError {
+    /// Two nodes share this id.
+    DuplicateNode { id: String },
+    /// An edge names a node the pipeline does not declare.
+    UnknownNode { id: String },
+    /// An invoke node names a capability the registry does not hold.
+    PipelineNoSuchCapability { id: String, known: Vec<String> },
+    /// An argument is refused as the capability's validation refuses it.
+    PipelineArgRefused { node: String, reason: InvokeError },
+    /// An edge closes a cycle; `cycle` names it from `node`.
+    PipelineCycle { node: String, cycle: Vec<String> },
+    /// An edge's producer output does not feed the argument's space.
+    EdgeTypeMismatch {
+        node: String,
+        arg: String,
+        producer: String,
+        consumer: String,
+    },
+    /// An edge names a node declared later, without closing a cycle.
+    PipelineForwardEdge {
+        node: String,
+        arg: String,
+        upstream: String,
+    },
+    /// The node's declared output does not admit what its capability answers,
+    /// or the capability answers nothing.
+    PipelineOutputContradicts {
+        node: String,
+        capability: String,
+        declared: ValueSpace,
+        result: Returns,
+    },
+}
+
+/// A space's family name, as an edge mismatch names it.
+fn space_tag(s: &ValueSpace) -> &'static str {
+    match s {
+        ValueSpace::IntRange(..) => "int",
+        ValueSpace::FloatRange(..) => "float",
+        ValueSpace::StringLen(..) => "string",
+        ValueSpace::Enum(_) => "enum",
+        ValueSpace::AnyString => "anyString",
+        ValueSpace::SlotTree(_) => "slotTree",
+    }
+}
+
+fn arg_source_of(c: &Cursor<'_>) -> Result<ArgSource, DecodeError> {
+    Ok(match c.tag("$type", &["literal", "fromNode"])? {
+        "literal" => ArgSource::Literal(c.field("value")?.string()?.to_string()),
+        _ => ArgSource::FromNode(c.field("node")?.string()?.to_string()),
+    })
+}
+
+fn node_of(c: &Cursor<'_>) -> Result<PipelineNode, DecodeError> {
+    let tag = c.tag("$type", &["source", "invoke"])?;
+    let id = c.field("id")?.string()?.to_string();
+    let output_type = space_of(&c.field("outputType")?)?;
+    Ok(match tag {
+        "source" => PipelineNode::Source {
+            id,
+            data_ref: c.field("dataRef")?.string()?.to_string(),
+            output_type,
+        },
+        _ => PipelineNode::Invoke {
+            id,
+            capability_id: c.field("capabilityId")?.string()?.to_string(),
+            output_type,
+            args: c
+                .field("args")?
+                .items()?
+                .iter()
+                .map(|a| {
+                    Ok((
+                        a.field("addr")?.string()?.to_string(),
+                        arg_source_of(&a.field("source")?)?,
+                    ))
+                })
+                .collect::<Result<_, DecodeError>>()?,
+        },
+    })
+}
+
+impl CapabilityPipeline {
+    /// Read a pipeline from its wire text: strict JSON, then the pipeline seam's
+    /// declaration read leniently ([`seam::CAPABILITY_PIPELINE`], which refuses as
+    /// the reference's derived codec does, an ill-formed output space included),
+    /// then the typed nodes. Twin of `CapabilityPipeline.decodeDetailed`.
+    pub fn decode(text: &str) -> Result<CapabilityPipeline, DecodeError> {
+        let v = decode::parse(text, &JsonLimits::STRICT)?;
+        let reading = Reading {
+            strict: false,
+            param: Slot::Str,
+        };
+        seam::read(&Slot::Record(&seam::CAPABILITY_PIPELINE), &v, &reading)?;
+        let nodes = Cursor::root(&v)
+            .field("nodes")?
+            .items()?
+            .iter()
+            .map(node_of)
+            .collect::<Result<_, _>>()?;
+        Ok(CapabilityPipeline { nodes })
+    }
+
+    fn node(&self, id: &str) -> Option<(usize, &PipelineNode)> {
+        self.nodes.iter().enumerate().find(|(_, n)| n.id() == id)
+    }
+
+    /// The path from `start` along `FromNode` edges to a node whose edge reaches
+    /// `target`: `[start, …, x]` with `x -> target`, depth first in argument
+    /// order, each node visited once. Iterative, so a long chain of edges costs
+    /// heap and not stack.
+    fn path_to(&self, target: &str, start: &str) -> Option<Vec<String>> {
+        let ups = |id: &str| {
+            self.node(id)
+                .map(|(_, n)| n.upstreams())
+                .unwrap_or_default()
+        };
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut stack: Vec<(&str, usize)> = Vec::new();
+        seen.insert(start);
+        if ups(start).contains(&target) {
+            return Some(vec![start.to_string()]);
+        }
+        stack.push((start, 0));
+        while let Some(top) = stack.last_mut() {
+            let (cur, next) = *top;
+            top.1 += 1;
+            let below = ups(cur);
+            let Some(&u) = below.get(next) else {
+                stack.pop();
+                continue;
+            };
+            if !seen.insert(u) {
+                continue;
+            }
+            if ups(u).contains(&target) {
+                let mut path: Vec<String> = stack.iter().map(|(n, _)| n.to_string()).collect();
+                path.push(u.to_string());
+                return Some(path);
+            }
+            stack.push((u, 0));
+        }
+        None
+    }
+
+    /// Type-check the pipeline against a registry: node ids are unique; every
+    /// invoke's capability resolves (default-deny); its declared output admits
+    /// the capability's declared result (`PipelineOutputContradicts`, before any
+    /// argument is read); every argument is one the capability takes, once
+    /// (`DuplicateArg`), refused as [`Capability::validate_args`] refuses it; a
+    /// `FromNode` edge names a declared node EARLIER in declaration order (a
+    /// self-edge or an edge closing a cycle is `PipelineCycle`, any other later
+    /// node `PipelineForwardEdge`) whose output space feeds the argument's
+    /// ([`ValueSpace::subsumes`], else `EdgeTypeMismatch`); every required hole is
+    /// bound. The first refusal in declaration order is the answer. The registry's
+    /// gates are not consulted: typing is not deciding. Twin of
+    /// `CapabilityPipeline.typeCheck`.
+    pub fn type_check<C>(&self, registry: &CapabilityRegistry<C>) -> Result<(), PipelineError> {
+        // The first id, in first-occurrence order, that two nodes share.
+        let ids: Vec<&str> = self.nodes.iter().map(PipelineNode::id).collect();
+        if let Some(dup) = ids
+            .iter()
+            .find(|id| ids.iter().filter(|x| x == id).count() > 1)
+        {
+            return Err(PipelineError::DuplicateNode {
+                id: dup.to_string(),
+            });
+        }
+        for (position, n) in self.nodes.iter().enumerate() {
+            let PipelineNode::Invoke {
+                id: nid,
+                capability_id,
+                output_type,
+                args,
+            } = n
+            else {
+                continue;
+            };
+            let Some(cap) = registry.try_find(capability_id) else {
+                return Err(PipelineError::PipelineNoSuchCapability {
+                    id: capability_id.clone(),
+                    known: registry.ids(),
+                });
+            };
+            let states = match &cap.result {
+                Returns::Value(answered) => output_type.subsumes(answered),
+                Returns::Nothing => false,
+            };
+            if !states {
+                return Err(PipelineError::PipelineOutputContradicts {
+                    node: nid.clone(),
+                    capability: capability_id.clone(),
+                    declared: output_type.clone(),
+                    result: cap.result.clone(),
+                });
+            }
+            self.check_args(position, nid, cap, args)?;
+        }
+        Ok(())
+    }
+
+    fn check_args(
+        &self,
+        position: usize,
+        nid: &str,
+        cap: &Capability,
+        args: &[(String, ArgSource)],
+    ) -> Result<(), PipelineError> {
+        let refused = |reason| PipelineError::PipelineArgRefused {
+            node: nid.to_string(),
+            reason,
+        };
+        let declared: Vec<String> = cap.signature.holes.iter().map(|h| h.addr.clone()).collect();
+        if let Some(addr) = repeated_addrs(args).into_iter().next() {
+            return Err(refused(InvokeError::DuplicateArg { addr }));
+        }
+        for (addr, src) in args {
+            let fault = match src {
+                ArgSource::Literal(v) => cap.arg_fault(&declared, addr, v).map(refused),
+                ArgSource::FromNode(up) => match cap.hole(addr) {
+                    None => Some(refused(InvokeError::UnknownArg {
+                        addr: addr.clone(),
+                        declared: declared.clone(),
+                    })),
+                    Some(h) => match h.space() {
+                        None => Some(refused(InvokeError::UninvocableArg { addr: addr.clone() })),
+                        Some(arg_space) => self.edge_fault(position, nid, addr, up, &arg_space),
+                    },
+                },
+            };
+            if let Some(e) = fault {
+                return Err(e);
+            }
+        }
+        let unbound: Vec<String> = cap
+            .signature
+            .holes
+            .iter()
+            .filter(|h| h.required && !args.iter().any(|(a, _)| *a == h.addr))
+            .map(|h| h.addr.clone())
+            .collect();
+        if unbound.is_empty() {
+            Ok(())
+        } else {
+            Err(refused(InvokeError::RequiredArgsUnbound { addrs: unbound }))
+        }
+    }
+
+    fn edge_fault(
+        &self,
+        position: usize,
+        nid: &str,
+        addr: &str,
+        up: &str,
+        arg_space: &ValueSpace,
+    ) -> Option<PipelineError> {
+        let Some((up_position, up_node)) = self.node(up) else {
+            return Some(PipelineError::UnknownNode { id: up.to_string() });
+        };
+        if up == nid {
+            return Some(PipelineError::PipelineCycle {
+                node: nid.to_string(),
+                cycle: vec![nid.to_string()],
+            });
+        }
+        if up_position > position {
+            return Some(match self.path_to(nid, up) {
+                Some(path) => {
+                    let mut cycle = vec![nid.to_string()];
+                    cycle.extend(path);
+                    PipelineError::PipelineCycle {
+                        node: nid.to_string(),
+                        cycle,
+                    }
+                }
+                None => PipelineError::PipelineForwardEdge {
+                    node: nid.to_string(),
+                    arg: addr.to_string(),
+                    upstream: up.to_string(),
+                },
+            });
+        }
+        if arg_space.subsumes(up_node.output_type()) {
+            None
+        } else {
+            Some(PipelineError::EdgeTypeMismatch {
+                node: nid.to_string(),
+                arg: addr.to_string(),
+                producer: space_tag(up_node.output_type()).to_string(),
+                consumer: space_tag(arg_space).to_string(),
+            })
+        }
     }
 }

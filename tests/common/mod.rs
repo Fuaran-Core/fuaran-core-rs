@@ -7,7 +7,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use fuaran_core::json::{self, JVal, render_canonical};
+use fuaran_core::decode::DecodeError;
+use fuaran_core::json::{self, JVal, PathSeg, render_canonical};
 
 // ─── Locating Core ───────────────────────────────────────────────────────────
 
@@ -98,4 +99,16 @@ pub fn declared(dir: &str, family: &str) -> usize {
 
 pub fn vectors(doc: &JVal) -> &[JVal] {
     arr(doc, "vectors")
+}
+
+/// A refusal's path as the vectors write it: a member by its name, an item by
+/// its index.
+pub fn path_json(e: &DecodeError) -> Vec<JVal> {
+    e.path
+        .iter()
+        .map(|s| match s {
+            PathSeg::Key(k) => JVal::Str(k.clone()),
+            PathSeg::Index(i) => JVal::Num(*i as f64),
+        })
+        .collect()
 }

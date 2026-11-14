@@ -207,7 +207,7 @@ fn skeleton_merge_vectors() {
         }
         ran += 1;
     }
-    assert_eq!(ran, 12);
+    assert_eq!(ran, 13);
     assert_eq!(ran, declared("merge", "skeletonMerge"));
 }
 

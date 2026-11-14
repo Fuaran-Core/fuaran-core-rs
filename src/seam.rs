@@ -190,7 +190,8 @@ pub static PLACEMENT: UnionDecl = UnionDecl {
     ],
 };
 
-/// `DeclarationFault`.
+/// `DeclarationFault`. The two result faults (Phase 642) are declared after the
+/// hole faults, so every earlier tag keeps its place.
 pub static DECLARATION_FAULT: UnionDecl = UnionDecl {
     name: "DeclarationFault",
     key: "$type",
@@ -205,6 +206,8 @@ pub static DECLARATION_FAULT: UnionDecl = UnionDecl {
         case("nonFiniteBound", &[req("addr", Slot::Str)]),
         case("duplicateHoleAddr", &[req("addr", Slot::Str)]),
         case("holeUnderSlot", &[req("node", Slot::Str)]),
+        case("emptyResult", &[req("space", Slot::Hosted(Hosted::Space))]),
+        case("nonFiniteResult", &[]),
     ],
 };
 

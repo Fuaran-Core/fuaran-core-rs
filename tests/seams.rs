@@ -4,19 +4,9 @@
 mod common;
 use common::*;
 
-use fuaran_core::decode::{self, DecodeError};
-use fuaran_core::json::{JVal, JsonLimits, PathSeg};
+use fuaran_core::decode;
+use fuaran_core::json::{JVal, JsonLimits};
 use fuaran_core::seam::{self, Reading, Slot};
-
-fn path_json(e: &DecodeError) -> Vec<JVal> {
-    e.path
-        .iter()
-        .map(|s| match s {
-            PathSeg::Key(k) => JVal::Str(k.clone()),
-            PathSeg::Index(i) => JVal::Num(*i as f64),
-        })
-        .collect()
-}
 
 #[test]
 fn seam_refusals() {

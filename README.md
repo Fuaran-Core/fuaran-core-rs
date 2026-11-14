@@ -24,7 +24,7 @@ The crate is `no_std` + `alloc` by default, so it builds for microcontroller tar
 | `hash` | the FNV-1a fingerprint over UTF-16 code units, and the injective field encoding |
 | `column`, `field`, `unit` | the columnar `DataSource` codec, its refusals and the pinned aggregates; the schema field, its diff, fingerprint and delta; the unit of measure's parser and canonical text |
 | `propagation` | the evaluation order and its cycles, the dirty set of a change, and the incremental evaluation |
-| `capability`, `seam` | the invocable-capability contract (argument validation, the invocation key, the declaration codec, the registry); the seams' refusal and declaration documents, read by one declaration-driven codec |
+| `capability`, `seam` | the invocable-capability contract (argument validation, the invocation key, the declaration codec with its declared result, the registry, its gates under a decision context of the host's type, the grant bound to the invocation's identity, the pipeline type check); the seams' refusal and declaration documents, read by one declaration-driven codec |
 | `canonical_form`, `profile` | an IDL vocabulary's canonical form (aliases, presence, defaults); the wire profile `<name>@<major>.<minor>` |
 
 ## Conformance
@@ -36,6 +36,15 @@ when no checkout is found. Which families are run, with each leg's count, is
 [DECISIONS.md](DECISIONS.md) D8 (D6 recorded the first certification); the counts themselves are the spine's
 adoption record in each of the reference's family manifests.
 
+The pin is Core `c7d3013` (`0.43.0`, a draft, **not yet released**), whose registry change this crate follows
+(CHANGELOG.md, DECISIONS.md D11). At that commit the crate answers every family with a manifest, the capability families
+among them: `capabilityLaws`, all 144 vectors (validation, the invocation key, the declaration round-trip with its
+declared result, the declaration refusals, enumeration, the pipeline type check), and `capabilityGateLaws`, all 41
+(the invocation's identity, grant coverage, the named decision and dispatch, each decided under the file's context
+labels and again under an integer context). Both capability families run on the standard profile and again on the
+embedded one, the library built without `std`; the embedded run executes on the build host, and the
+`thumbv7em-none-eabihf` build is a build.
+
 ## Build
 
 ```powershell
@@ -43,7 +52,8 @@ pwsh ./run.ps1
 ```
 
 `run.ps1` checks formatting, runs clippy, builds, runs the tests (the conformance legs among
-them), and builds the `no_std` profile for `thumbv7em-none-eabihf` (Cortex-M4F).
+them, and the capability legs a second time without `std`), and builds the `no_std` profile for
+`thumbv7em-none-eabihf` (Cortex-M4F).
 
 ## Verification
 

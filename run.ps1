@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 # fuaran-core-rs: the one-command entry point.
-# cargo fmt --check -> cargo clippy -> cargo build -> cargo test (and the premise probes in release) -> a no_std build for
-# thumbv7em-none-eabihf (Cortex-M4F) -> (opt-in) the machine-checked proofs under verification/.
+# cargo fmt --check -> cargo clippy -> cargo build -> cargo test (and the premise probes in release, and the capability
+# legs again without `std`, the embedded build's features) -> a no_std build for thumbv7em-none-eabihf (Cortex-M4F) ->
+# (opt-in) the machine-checked proofs under verification/.
 #
 # `cargo test` includes the conformance legs (tests/conformance.rs), which read Core's vectors from a
 # Core checkout: FUARAN_CORE_DIR, or `fuaran-core/` beside this repository, at the commit
@@ -88,6 +89,9 @@ if (-not $SkipTests) {
     Invoke-Stage "cargo test" { & $cargo test --all-features }
     # The depth premise is claimed for both profiles (DECISIONS.md D10): the reader's frames differ between them.
     Invoke-Stage "cargo test --release (premises)" { & $cargo test --release --all-features --test premises }
+    # The capability law and gate vectors are claimed for both profiles (DECISIONS.md D11): run again on the library
+    # built as the embedded build builds it (no `std`). They run on this host; the target build below only builds.
+    Invoke-Stage "cargo test --no-default-features (capability legs)" { & $cargo test --no-default-features --test capability --test capability_gate }
 }
 
 if (-not $SkipEmbedded) {

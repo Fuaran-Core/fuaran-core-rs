@@ -1,16 +1,19 @@
 //! Certifies the capability contract against Core's `laws/capability-laws.json`
 //! (family `capabilityLaws`): argument validation, the invocation key and its
-//! determinism tag, the declaration codec's round-trip, and id-ordered registry
-//! enumeration.
+//! determinism tag, the declaration codec's round-trip with the declared result,
+//! the declaration reader's refusals, id-ordered registry enumeration, and the
+//! pipeline type check of a call's declared output against that result.
 //!
 //! The family's size is its row in `laws/manifest.json`, and the file's own
-//! `iterations` times the six cases each iteration draws; every leg asserts the
-//! exact count of the case it ran.
+//! `iterations` times the twelve vectors each iteration draws; every leg asserts
+//! the exact count of the case it ran.
 
 mod common;
 
 use common::*;
-use fuaran_core::capability::{Capability, CapabilityRegistry, InvokeError};
+use fuaran_core::capability::{
+    Capability, CapabilityPipeline, CapabilityRegistry, InvokeError, PipelineError,
+};
 use fuaran_core::json::{JVal, render_canonical};
 
 const FILE: &str = "laws/capability-laws.json";
@@ -68,9 +71,9 @@ fn verdict(r: Result<(), InvokeError>) -> String {
 }
 
 #[test]
-fn the_family_is_six_cases_per_iteration() {
+fn the_family_is_twelve_vectors_per_iteration() {
     let d = doc();
-    assert_eq!(vectors(&d).len(), 6 * iterations(&d));
+    assert_eq!(vectors(&d).len(), 12 * iterations(&d));
     assert_eq!(vectors(&d).len(), declared("laws", "capabilityLaws"));
 }
 
@@ -85,8 +88,8 @@ fn validate_args() {
         assert_eq!(got, render_canonical(get(v, "expected")), "{id}");
         ran += 1;
     }
-    assert_eq!(ran, 3 * iterations(&d));
-    assert_eq!(ran, 36);
+    assert_eq!(ran, 5 * iterations(&d));
+    assert_eq!(ran, 60);
 }
 
 #[test]
@@ -171,4 +174,84 @@ fn registry_enumerate() {
     }
     assert_eq!(ran, iterations(&d));
     assert_eq!(ran, 12);
+}
+
+/// A refused declaration in the file's words: its decode code and the path to
+/// the fault.
+fn refusal(e: &fuaran_core::decode::DecodeError) -> String {
+    let path = path_json(e);
+    render_canonical(&JVal::Obj(vec![
+        ("verdict".into(), JVal::Str("reject".into())),
+        ("code".into(), JVal::Str(e.code.as_str().into())),
+        ("path".into(), JVal::Arr(path)),
+    ]))
+}
+
+#[test]
+fn declaration_refused() {
+    let d = doc();
+    let mut ran = 0;
+    for v in of_case(&d, "declarationRefused") {
+        let id = s(v, "id");
+        let e = match Capability::decode(s(get(v, "input"), "declaration")) {
+            Err(e) => e,
+            Ok(c) => panic!("{id}: admitted {}", c.encode()),
+        };
+        assert_eq!(
+            refusal(&e),
+            render_canonical(get(v, "expected")),
+            "{id}: {e:?}"
+        );
+        ran += 1;
+    }
+    assert_eq!(ran, 2 * iterations(&d));
+    assert_eq!(ran, 24);
+}
+
+/// A type check's verdict in the file's words: accept, or the one refusal the
+/// family names (anything else is `unexpected`, with its detail).
+fn typed(r: Result<(), PipelineError>) -> String {
+    let members: Vec<(String, JVal)> = match r {
+        Ok(()) => vec![("verdict".into(), JVal::Str("accept".into()))],
+        Err(PipelineError::PipelineOutputContradicts {
+            node, capability, ..
+        }) => vec![
+            ("verdict".into(), JVal::Str("reject".into())),
+            (
+                "error".into(),
+                JVal::Str("pipelineOutputContradicts".into()),
+            ),
+            ("node".into(), JVal::Str(node)),
+            ("capability".into(), JVal::Str(capability)),
+        ],
+        Err(other) => vec![
+            ("verdict".into(), JVal::Str("reject".into())),
+            ("error".into(), JVal::Str("unexpected".into())),
+            ("detail".into(), JVal::Str(format!("{other:?}"))),
+        ],
+    };
+    render_canonical(&JVal::Obj(members))
+}
+
+#[test]
+fn pipeline_type_check() {
+    let d = doc();
+    let mut ran = 0;
+    for v in of_case(&d, "pipelineTypeCheck") {
+        let id = s(v, "id");
+        let input = get(v, "input");
+        let r = CapabilityRegistry::new()
+            .register(cap_of(id, s(input, "capability")))
+            .unwrap_or_else(|e| panic!("{id}: {}", e.describe()));
+        let p = CapabilityPipeline::decode(s(input, "pipeline"))
+            .unwrap_or_else(|e| panic!("{id}: the pipeline does not decode: {e:?}"));
+        assert_eq!(
+            typed(p.type_check(&r)),
+            render_canonical(get(v, "expected")),
+            "{id}"
+        );
+        ran += 1;
+    }
+    assert_eq!(ran, 2 * iterations(&d));
+    assert_eq!(ran, 24);
 }

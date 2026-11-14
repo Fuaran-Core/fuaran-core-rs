@@ -399,17 +399,9 @@ fn skeleton_dag_vectors() {
         let (id, input, expected) = (s(v, "id"), get(v, "input"), get(v, "expected"));
         match s(v, "case") {
             "build" => check_build(id, input, expected),
+            "write" => check_write(id, input, expected),
             "verify" => {
-                let nodes = arr(input, "nodes")
-                    .iter()
-                    .map(|x| DagNode {
-                        id: s(x, "id").to_string(),
-                        parents: str_items(x, "parents"),
-                        actor: actor_of(s(x, "actor")),
-                        op: op_of(s(x, "op")),
-                    })
-                    .collect();
-                let dag = Dag::from_nodes(nodes);
+                let dag = held(input);
                 match (s(expected, "verdict"), dag.first_break()) {
                     ("intact", None) => {}
                     ("break", Some(b)) => {
@@ -422,6 +414,47 @@ fn skeleton_dag_vectors() {
                 }
             }
             other => panic!("{id}: unknown case {other}"),
+        }
+    }
+}
+
+/// A DAG holding the input's `nodes` under their recorded ids, not re-hashed.
+fn held(input: &JVal) -> Dag<Op> {
+    let nodes = arr(input, "nodes")
+        .iter()
+        .map(|x| DagNode {
+            id: s(x, "id").to_string(),
+            parents: str_items(x, "parents"),
+            actor: actor_of(s(x, "actor")),
+            op: op_of(s(x, "op")),
+        })
+        .collect();
+    Dag::from_nodes(nodes)
+}
+
+/// Writes on a DAG that already holds nodes: each answers the id it recorded (or
+/// found already held), or its refusal, in order.
+fn check_write(id: &str, input: &JVal, expected: &JVal) {
+    let mut dag = held(input);
+    let writes = arr(input, "writes");
+    let want_writes = arr(expected, "writes");
+    assert_eq!(writes.len(), want_writes.len(), "{id}");
+    for (w, want) in writes.iter().zip(want_writes) {
+        let label = s(w, "label");
+        assert_eq!(s(want, "label"), label, "{id}");
+        let (actor, op, parents) = (
+            actor_of(s(w, "actor")),
+            op_of(s(w, "op")),
+            str_items(w, "parents"),
+        );
+        let written = match s(w, "verb") {
+            "appendOn" => dag.append_on(actor, op, parents),
+            "mergeAll" => dag.merge_all(actor, op, parents),
+            other => panic!("{id}: unknown verb {other}"),
+        };
+        match written {
+            Ok(node) => assert_eq!(node, s(want, "id"), "{id}: write {label}"),
+            Err(f) => assert_eq!(f.encode(), s(want, "refused"), "{id}: write {label}"),
         }
     }
 }

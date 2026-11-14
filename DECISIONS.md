@@ -124,6 +124,7 @@ does not. Each leg asserts the count its manifest declares and fails on a vector
 | `columnar.rs` | the `column` vectors of `codecRefusals`; the `codecDecode`, `codecEncode` and `aggregate` vectors of `decimal`; `fieldLaws` | `column`, `field`, `unit` |
 | `propagation_forms.rs` | `propagationLaws`, `canonicalFormLaws`; the `profile` vectors of `codecRefusals` | `propagation`, `canonical_form`, `profile` |
 | `capability.rs` | `capabilityLaws` | `capability`, `hash` |
+| `capability_gate.rs` | `capabilityGateLaws` (since D11) | `capability` |
 | `seams.rs` | `seamRefusals` | `seam` |
 | `premises.rs` | `premiseStringModel`, `premiseFloatDigits`, `premiseInt53`, `premiseSha256`, `premiseRecursionDepth` | `json`, `decode`, `number`, `sha256` |
 
@@ -233,3 +234,115 @@ reference's 512, not only on a desktop thread.
   nesting stack: it is the strings and items every read still grows under symbolic content, which is D7's own
   finding. D7's verdict for the reader stands, and what would change it is no longer "one arena" but a reader whose
   strings and items do not grow under the checker (a counted pre-pass, or a proof-carrying extraction).
+
+## D11 — 2026-11-14 — the gate decides under a context the host chooses the type of, a grant is bound to the invocation's identity as bytes, and a capability declares its result
+
+Phase 645 follows the reference's registry change: a gate decides under a decision context and a dispatch may present a
+grant (the reference's D249, Phase 638), a capability declares what it answers (D253, Phase 642), and the gate, the
+context and the grant are emitted as a law family of their own (D255, Phase 650). `core-pin.json` moves to Core
+`c7d3013`, whose `0.43.0` is a draft and not released.
+
+**D11.1 — went red first.** At the new pin, before the crate changed: every one of the 144 capability law vectors
+failed (each declaration now carries `result`, which the reader read past and the writer never wrote; the
+`declarationRefused` and `pipelineTypeCheck` cases had no reader), the 41 vectors of `capabilityGateLaws` had no leg
+and no API to run on, and 4 seam-refusal vectors failed on the new `DeclarationFault` tags. Two vectors outside the
+capability moved with the pin and failed too (D11.9).
+
+**D11.2 — the context is a type parameter, as in the reference.** `CapabilityRegistry<C = ()>` and `PolicyGate<C>`
+carry it; `decide_named` and `dispatch` take `&C` after the registry. `CapabilityRegistry::new()` is the registry that
+needs no context (`C = ()`), `empty()` builds one for any `C`, and `under(ctx)` fixes a context, answering a registry
+at `()` that decides exactly as this one does under `ctx`. The crate names nothing a context holds. Two alternatives
+lost. A context erased to `&dyn Any` is a downcast at every gate, the shape the reference rejected as a cast at every
+gate (its D249.8). A context trait the crate defines (an actor, a role) would name what a context holds, which the
+reference deliberately does not. Embedded cost: none in the type; a host instantiates `C` at an integer.
+
+**D11.3 — a gate is a name and a shared decision function.** `PolicyGate<C>` holds its name and an
+`Arc<dyn Fn(&C, &Capability, &[(String, String)]) -> PolicyDecision + Send + Sync>`. A registry is persistent
+(`register` and `with_gate` answer a new registry), so its gates are shared between versions, and a gate built from
+data at run time (the conformance leg builds every gate from the file's table) must capture. Two gates are equal when
+they have the same name and the same function (`Arc::ptr_eq`), the reference's identity of functions. Alternatives: a
+`fn` pointer, which cannot capture a table; `Rc`, which makes every registry `!Send` for a threaded host; a trait of the
+crate's, the same cost with more ceremony. `Send + Sync` costs a gate nothing it should hold: a decision is total and
+free of side effects, and a fact that changes is the host's to put in the context. Embedded cost: one allocation per
+gate when it is added, a virtual call per gate per decision, and pointer-width atomics, which `thumbv7em-none-eabihf`
+has; a target without them (`thumbv6m-none-eabi`) has no `alloc::sync::Arc`, so the crate no longer builds there (stated from the
+`alloc` documentation, not built here: that target is not installed); an `Rc` selected by `cfg(target_has_atomic)` is the
+remedy if such a host appears. The reference's denial observers are not carried: a
+refusal is the dispatch's `Err`, where a host that audits reads it; no vector or consumer needs one, and one is
+additive later.
+
+**D11.4 — a grant is the invocation's identity, compared as bytes.** `Capability::invocation_identity(args)` is the
+reference's `invocationPreimage`: the capability id, then each binding's address and its value's canonical spelling in
+its hole's space, sorted by address (ordinal), through `hash::canonical_fields` (every U+0010 and U+0001 a field holds
+preceded by U+0010, each field terminated by U+0001), with no hash. `Grant` holds that string,
+`Capability::grant(args)` mints the grant for exactly this invocation, and `Grant::covers` compares the two
+identities' bytes, with no normalisation. The capture key and the identity share one helper (`spelled_bindings`), so
+the canonical spelling cannot drift between them, and the key keeps its bytes. A dispatch presents `Option<&Grant>`.
+Three alternatives lost. The capture key (`invocation_key`), which ends in a 32-bit hash whose second pre-image is
+cheap: an approval bound to it is forgeable (the reference's D249.3). A digest of the identity, which a host can take
+itself (D249.8). A list of grants, which the reference takes only for a pipeline run, not ported here (D11.6). Embedded
+cost: the identity is a heap string of the invocation's size (20 bytes for the family's three-binding call), rendered
+only when a gate asks for an approval.
+
+**D11.5 — one judgement under the named read and the dispatch.** `decide_named` and `dispatch` run the same private
+`judge`: resolve the id (`NoSuchCapability` naming the held ids), validate the arguments, then the join over the gates
+in order, the deciding gate the FIRST of the greatest rank and `""` when every gate allows, with a `NeedsApproval`
+lifted to `Allow` when the grant covers this invocation and its name kept (the reference's D255.5, D255.6). So a
+dispatch refuses exactly as the read decides: `PolicyRefused` with the gate, the message and the alternatives for a
+`Deny`, which no grant lifts, and `ApprovalRequired` naming the gate for a needs-approval no grant lifts. The
+performer is `FnOnce(&Capability) -> Result<T, InvokeError>`, so it runs at most once by type and exactly once on
+`Allow`, and never on a refusal. The reference's `Deferred` envelope is not ported: the crate holds no such type, and a
+host's `T` can be its own. The reference's `decide` (a refusal folded into a `Deny` with its sentence) is not ported
+either: `decide_named` answers the same decision with the typed refusal.
+
+**D11.6 — the declared result, its wire member and its refusals.** `Returns` is `Nothing` or `Value(ValueSpace)`, and
+`Capability` gains `result` (`Capability::new(id, signature, placement, result)`; the record breaks every full
+literal). On the wire it is the member `result`, a value space's own document or `{"$type":"nothing"}`. The reader
+requires it (`MissingField` at `result`) and holds it to the admission gate after the signature, so a signature fault
+is answered first (`OutOfRange` at `result`); the registry refuses it at `register`; the guarded encode refuses a
+non-finite bound in it. `DeclarationFault` gains `EmptyResult` and `NonFiniteResult`, and the seam table gains their
+tags after the hole faults. The pipeline type check is ported because the capability family's `pipelineTypeCheck`
+vectors test the result's one checked use, a call's declared output: `CapabilityPipeline` (read through the pipeline
+seam's own declaration, then typed), `PipelineError` and `type_check`, the whole of the reference's check, with
+`ValueSpace::subsumes`, the relation it asks. Two alternatives lost: leaving the 24 vectors unrun, which would adopt the
+family at 120 of 144 and leave the result unchecked anywhere; and checking the declared output alone, a partial check
+answering under the reference's name for pipelines the reference refuses. Not ported, with no vector or consumer:
+evaluation, a node's capture key, the pipeline's writer, and `PipelineError`'s sentences. Embedded cost: none beyond the
+declaration's own heap.
+
+**D11.7 — the embedded profile, measured: the context can be an integer, and the decision path allocates.** The crate
+is `no_std` + `alloc` on every profile and the `std` feature adds nothing, so the embedded profile is the library built
+without `std`, for `thumbv7em-none-eabihf`. `run.ps1` now runs the capability law and gate legs a second time with
+`--no-default-features`; both are green. They run on the build host: the target build only builds, because no emulator
+is in the gate. Every gate vector is decided twice, under the file's string labels and under a `u8` context (each
+label's index), so "a gate decides on a context of integers only" holds. "And no allocation" does not hold for the crate
+as it stands, measured with a counting global allocator around one call (x86_64; release and debug equal):
+
+| Call | Allocations | Bytes |
+|---|---|---|
+| a gate's own decision over a `u8` context, `Allow` or `NeedsApproval` | 0 | 0 |
+| `Grant::covers`, given the identity | 0 | 0 |
+| `decide_named`, allowed, one binding | 4 | 99 |
+| `decide_named`, needs approval, no grant, three bindings | 11 | 181 |
+| `decide_named`, needs approval, its own grant, three bindings | 27 | 504 |
+| `dispatch`, allowed, one binding | 4 | 99 |
+| `dispatch`, granted, three bindings | 26 | 497 |
+| `invocation_identity`, one binding / three bindings | 7 / 16 | 117 / 323 |
+| `with_gate`, a registry of two capabilities | 18 | 833 |
+
+Sizes on x86_64: `CapabilityRegistry<u8>` 48 bytes, `PolicyGate<u8>` 40, `PolicyDecision` 48, `Grant` 24, `Returns` 32,
+`Capability` 120. What allocates is the registry path, not the gate: argument validation materialises each value's
+canonical spelling (`ValueSpace::canonical` answers a `String`) and two vectors of addresses; the identity is built as a
+string before it is compared; `decide_named` clones the gate's name. A decision that allocates nothing would need a
+validation that checks membership without spelling the value, an identity streamed against the grant's bytes (the
+bindings ordered without a vector, the number form written through `core::fmt::Write`), the gate's name borrowed, and a
+denial's guidance borrowed or static. That is a successor's to build: it changes the validation every seam shares.
+
+**D11.8 — the version says the API broke.** `0.0.1-alpha.1` becomes `0.0.2-alpha.1`. Under Cargo's rules a
+requirement on `0.0.1-alpha.1` admits a later `0.0.1` pre-release, so `0.0.1-alpha.2` would read as compatible; `0.0.2-*`
+is outside it, so a consumer that depends as D2 says fails to resolve, loudly. `0.1.0-alpha.1` lost: it would start a
+minor line nothing decided. `CHANGELOG.md` is new with this entry, and records the Core commit followed.
+
+**D11.9 — what else the pin moved.** Core's Phase 568 added a `write` case to `skeletonDag` (writes on a DAG built from
+held nodes, one refused as a content-id collision) and a vector to `skeletonMerge`. The crate already answered both; the
+legs gained the reader and the count. The leg table of D8 gains `capability_gate.rs`.

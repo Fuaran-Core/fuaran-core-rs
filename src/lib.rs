@@ -14,8 +14,10 @@
 //! - [`column`], [`field`] and [`unit`] — the columnar codec and aggregates, the
 //!   schema field, and the unit of measure's canonical text;
 //! - [`propagation`] — change propagation over a declared dependency graph;
-//! - [`capability`] — the invocable-capability contract; [`seam`] — the seams'
-//!   refusal and declaration documents;
+//! - [`capability`] — the invocable-capability contract: the declaration and
+//!   its declared result, the registry's gates under a decision context, the
+//!   grant bound to an invocation's identity, and the pipeline type check;
+//!   [`seam`] — the seams' refusal and declaration documents;
 //! - [`canonical_form`] — an IDL vocabulary's canonical form; [`profile`] — the
 //!   wire profile.
 //!
