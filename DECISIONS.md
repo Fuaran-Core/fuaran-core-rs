@@ -111,6 +111,9 @@ this phase's, and both are named under the write-up's `SUCCESSOR`.
 
 ## D8 — 2026-10-24 — the spine answers every family the reference emits, and where its counts live
 
+*Amended by D13 (2026-11-16): the spine does not answer every family the reference emits; `tests/families.rs` names
+each one it does not, with the reason (`encodingProfile`, `identity`, `queryGrantLaws` at Core `0.43.0`).*
+
 Phase 564 extends the certification from five families to every family the reference emits under
 `conformance/`, at the Core commit `core-pin.json` names. The counts are the reference's to record: each family's
 manifest carries the spine's adoption record (`fuaran-core-rs`), the law families' in their own index
@@ -123,10 +126,11 @@ does not. Each leg asserts the count its manifest declares and fails on a vector
 | `structural.rs` | `skeletonMerge`, `skeletonDiff` | `merge` (the common base and `reconcile_many` under `ops::footprint`), `diff` |
 | `columnar.rs` | the `column` vectors of `codecRefusals`; the `codecDecode`, `codecEncode` and `aggregate` vectors of `decimal`; `fieldLaws` | `column`, `field`, `unit` |
 | `propagation_forms.rs` | `propagationLaws`, `canonicalFormLaws`; the `profile` vectors of `codecRefusals` | `propagation`, `canonical_form`, `profile` |
-| `capability.rs` | `capabilityLaws` | `capability`, `hash` |
+| `capability.rs` | `capabilityLaws`; `capabilityDocumentLaws` (since D13) | `capability`, `hash` |
 | `capability_gate.rs` | `capabilityGateLaws` (since D11) | `capability` |
 | `seams.rs` | `seamRefusals` | `seam` |
 | `premises.rs` | `premiseStringModel`, `premiseFloatDigits`, `premiseInt53`, `premiseSha256`, `premiseRecursionDepth` | `json`, `decode`, `number`, `sha256` |
+| `families.rs` (since D13) | none: it names every family a manifest declares as answered by a leg or not answered, with the reason | the manifests |
 
 Three rulings sit inside it.
 
@@ -577,3 +581,56 @@ a document or is admitted by one (`document-pipeline-output-*`). A pipeline's ed
 `document`. The pipeline seam's value-space table gains the row `document` (`src/seam.rs`), so a node's declared
 output may be a document space; the seam's well-formedness rule already admits a space it has no bound rule for,
 which is the reference's rule for a document.
+
+**D13.8 — what a document argument costs, measured.** Allocations: `tests/capability_alloc.rs` gains a second leg
+over a registry holding the family's document capability beside `read`, under a gate that parks the document for
+approval; the counting allocator of D12.1, x86_64, on both profiles, debug and release, every count equal. Times: a
+scratch crate depending on the library built as the embedded profile builds it (`default-features = false`), release,
+x86_64 (`x86_64-pc-windows-msvc`, rustc 1.97.0), a loop of 2×10⁵ calls (2×10⁴ for the largest document) around
+`black_box`, the best of five, with the answer consumed so the call is not elided; the times grow with the document,
+which is the evidence the work was done.
+
+| Call, the family's document (43 bytes, respelled) | Allocations | Bytes |
+|---|---|---|
+| `validate_args`, one document, either spelling | 11 | 858 |
+| `decide_named` / `dispatch`, allowed, one document | 11 | 858 |
+| `decide_named`, its own grant, the document respelled | 34 | 2,049 |
+| `Grant::covers_invocation`, the document respelled | 23 | 1,191 |
+| the identity written to a stack buffer, one document | 23 | 1,191 |
+| `validate_args`, refused: no document (`order`) | 4 | 58 |
+| `decide_named`, `read` (no document hole), on the same registry | 0 | 0 |
+
+| Document | `validate_args` | `document_of` | `invocation_key` | `covers_invocation` |
+|---|---|---|---|---|
+| the family's, 43 bytes | 417 ns | 940 ns | 1,209 ns | 905 ns |
+| an order of 10 lines, 592 bytes | 6.3 µs | 11.6 µs | 12.8 µs | 11.5 µs |
+| an order of 100 lines, 5,722 bytes | 59.8 µs | 104 µs | 112 µs | 104 µs |
+
+An `anyString` hole given the same strings validates in 9 ns. So membership costs about 10 ns a byte here and the
+canonical text, which the key, the identity and a grant's coverage write, about 18 to 20 ns a byte; both are linear in
+the document. What forces the allocations is the reading: the strict reader builds the value (its strings, its arrays
+and its member lists), keeps its nesting stack on the heap (D10) and remembers each object's member names to refuse a
+repeated one (row 1); the `null` walk keeps its own stack; and the canonical text is a string, with each object's
+members collected to sort them. None of it is a copy the decision path could drop: a document's membership is a parse,
+and its one spelling is a rendering, by Core's own definition. A refused argument allocates for its refusal (the
+space and the value it names, as every `ArgOutOfSpace` does). The stack a document read takes does not grow with its
+depth, because neither the reader nor the writer recurses (D10). So D12's claim stands as stated, for the decision
+path of a capability with no tree or document hole: a host whose capabilities take documents allocates in validation
+and in a grant's check, in proportion to the document, as a host whose capabilities take trees already did (D12.2).
+Lost: holding a document hole's canonical text from validation to the identity, which would save the second read on
+a granted decision at the price of carrying a cache through every seam signature; the identity is asked only when a
+gate answers `NeedsApproval`.
+
+**D13.9 — the version.** `ValueSpace` gains a case, which breaks every exhaustive match over it (D13.2), so
+`0.0.3-alpha.1` becomes `0.0.4-alpha.1`, outside every requirement on `0.0.3-*`, by D11.8's rule. Nothing else in the
+public surface moved: `document_of` is added. The pin is Core `a9592b7` (`0.43.0`, released).
+
+**D13.10 — certified.** At Core `a9592b7`, on the hosted profile and again without `std`: `capabilityDocumentLaws` 18
+of 18 (validation 9, the key 2, the declaration round trip 2, the pipeline type check 5), `capabilityLaws` 144 and
+`capabilityGateLaws` 41 unchanged, and the zero-allocation table of D12.10 at zero for every row it had, debug and
+release. On the hosted profile, every other family the crate answered at `c7d3013`, with the counts its manifests
+declare: none of their vector files moved. Port-side tests hold what the vectors do not reach: a number no finite
+double spells (`1e400`, `-1e400`), the bare `NaN` and `Infinity`, a `null` below the root and an unpaired surrogate
+are each no document; the canonical text sorts by UTF-16 code unit and collapses a negative zero; the codec reads the
+type name as a string; the relation's nine document cases; and a number space refuses `NaN`, `Infinity`, `-Infinity`,
+`1e400` and `-1e400` as an argument (D260.7).

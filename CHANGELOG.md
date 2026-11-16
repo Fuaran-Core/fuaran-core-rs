@@ -3,6 +3,40 @@
 Every change to the crate's public API, newest first. Each entry names the Core commit the crate certifies against
 (`core-pin.json`), and whether that Core version is released.
 
+## 0.0.4-alpha.1 — 2026-11-16 — breaking
+
+Follows Core `a9592b7ff6ab7ed7d2e9ba83bbe6b13e163ce35e`, version `0.43.0`, **released** (the commit tagged `v0.43.0`;
+the previous pin was the `0.43.0` draft at `c7d3013`). The value spaces gain the document space of Core's Phase 644.
+DECISIONS.md D13 records the design, the families the crate answers and does not at this commit, and the measured
+costs.
+
+**Breaking:**
+
+- `ValueSpace` gains the case `Document(Option<String>)`: a well-formed JSON document, of the named type when one is
+  given (the name is carried and compared, never interpreted). `ValueSpace` is not `#[non_exhaustive]`, so an
+  exhaustive `match` over it no longer compiles until it handles the case.
+
+**Added:**
+
+- `capability::document_of`: a document argument's one spelling, its cross-host canonical text, or `None` for a
+  string that is no document.
+- A document space on the wire: `{"$type":"document"}` with an optional `documentType`, read and written by the space
+  codec, the declaration codec, the declared result and the pipeline seam (a node may declare a document output).
+
+**Behaviour of the new case:** a string lies in a document space when the strict reader reads it and it holds no
+`null` (so no repeated member, no ill-formed string and no number a finite double cannot spell); one that does not is
+`ArgOutOfSpace`, described as "a document: well-formed JSON". The capture key, the identity and a grant's coverage
+write a document argument as its canonical text, so two spellings of one document are one key and one grant. In the
+relation the documents are a family of their own. Nothing any other space decides, keys or spells changed.
+
+**Allocation:** the zero-allocation table of `0.0.3-alpha.1` holds for every row. A document argument allocates to be
+read, in validation and in a grant's check, in proportion to the document; measured in D13.8.
+
+**Certification:** `capabilityDocumentLaws` 18 of 18, `capabilityLaws` 144 and `capabilityGateLaws` 41, each on the
+standard profile and again without `std`; every other family the crate answered before, unchanged. `queryGrantLaws`
+(the identity of a query read and its grant) is not answered: the crate holds no query declaration (D13.5).
+`tests/families.rs` names every family the pinned Core emits as answered or not, with the reason.
+
 ## 0.0.3-alpha.1 — 2026-11-14 — breaking
 
 Follows Core `c7d3013cfed62f2a03c2651098b5440b9ff8abcf`, version `0.43.0`, which is a **draft and not yet released**

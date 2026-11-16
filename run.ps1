@@ -89,7 +89,7 @@ if (-not $SkipTests) {
     Invoke-Stage "cargo test" { & $cargo test --all-features }
     # The depth premise is claimed for both profiles (DECISIONS.md D10): the reader's frames differ between them.
     Invoke-Stage "cargo test --release (premises)" { & $cargo test --release --all-features --test premises }
-    # The capability law and gate vectors are claimed for both profiles (DECISIONS.md D11): run again on the library
+    # The capability law, document and gate vectors are claimed for both profiles (DECISIONS.md D11, D13): run again on the library
     # built as the embedded build builds it (no `std`), with the leg that holds the decision path at zero allocations
     # once the registry is built (D12). They run on this host; the target build below only builds.
     Invoke-Stage "cargo test --no-default-features (capability legs)" { & $cargo test --no-default-features --test capability --test capability_gate --test capability_alloc }

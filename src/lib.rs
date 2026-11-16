@@ -14,16 +14,18 @@
 //! - [`column`], [`field`] and [`unit`] — the columnar codec and aggregates, the
 //!   schema field, and the unit of measure's canonical text;
 //! - [`propagation`] — change propagation over a declared dependency graph;
-//! - [`capability`] — the invocable-capability contract: the declaration and
-//!   its declared result, the registry's gates under a decision context, the
-//!   grant bound to an invocation's identity, and the pipeline type check;
+//! - [`capability`] — the invocable-capability contract: the value spaces (a
+//!   document among them), the declaration and its declared result, the
+//!   registry's gates under a decision context, the grant bound to an
+//!   invocation's identity, and the pipeline type check;
 //!   [`seam`] — the seams' refusal and declaration documents;
 //! - [`canonical_form`] — an IDL vocabulary's canonical form; [`profile`] — the
 //!   wire profile.
 //!
 //! Each is the twin of the reference implementation (`Fuaran.Core`) and is
 //! certified against the conformance vectors it emits (`tests/`, one file per
-//! group of families; DECISIONS.md D8 says which).
+//! group of families; DECISIONS.md D8 says which, and `tests/families.rs` names
+//! each family the reference emits that the crate does not answer).
 //!
 //! `no_std` + `alloc` by default, so it builds for microcontroller targets; the
 //! `std` feature adds nothing to the surface today and exists so a hosted
