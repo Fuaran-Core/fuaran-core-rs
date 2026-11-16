@@ -1,7 +1,7 @@
 {
   "kind": "core-pin",
   "repository": "Fuaran-Core/fuaran-core",
-  "sha": "c7d3013cfed62f2a03c2651098b5440b9ff8abcf",
+  "sha": "a9592b7ff6ab7ed7d2e9ba83bbe6b13e163ce35e",
   "version": "0.43.0",
-  "reason": "Phase 645: the capability registry's gate under a decision context, the grant bound to the invocation's identity, and the declared result (Core Phases 638, 642 and 650; the reference's D249, D253, D255), certified against the capability law family and the new capability gate family. Core 0.43.0 is a DRAFT at this commit and is not released. Previous pin 438cf8d (Phase 564, Core 0.41.0 draft). CI checks Core out at this commit; moving it is a deliberate act in the change that needs it, with the legs re-run against the new commit."
+  "reason": "Phase 665: Core 0.43.0 as RELEASED, the commit tagged v0.43.0. It adds the document value space (Core Phase 644, the reference's D260) with its law family capabilityDocumentLaws, and the query registry's grant (Core Phase 651, D261) with its law family queryGrantLaws; the vectors of every family the port certified at the previous pin are byte for byte what they were. Previous pin c7d3013 (Phases 645 and 664, Core 0.43.0 draft). CI checks Core out at this commit; moving it is a deliberate act in the change that needs it, with the legs re-run against the new commit."
 }
