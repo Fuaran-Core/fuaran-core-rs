@@ -35,6 +35,7 @@ const ANSWERED: &[(&str, &str, &str)] = &[
     ("laws", "capabilityLaws", "capability"),
     ("laws", "capabilityDocumentLaws", "capability"),
     ("laws", "capabilityGateLaws", "capability_gate"),
+    ("laws", "queryGrantLaws", "query_grant"),
     ("refusals", "codecRefusals", "conformance"),
     ("refusals", "seamRefusals", "seams"),
     ("premises", "premiseStringModel", "premises"),
@@ -58,12 +59,6 @@ const NOT_ANSWERED: &[(&str, &str, &str)] = &[
         "identity",
         "not adopted (D13.6): a declared record's identity under its IDL vocabulary; the crate \
          holds no IDL vocabulary reader beyond the canonical-form slice",
-    ),
-    (
-        "laws",
-        "queryGrantLaws",
-        "not adopted (D13.5): the identity of a read and its grant; the crate holds no query \
-         declaration, codec or registry",
     ),
 ];
 
