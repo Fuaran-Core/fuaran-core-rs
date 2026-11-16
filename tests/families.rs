@@ -1,7 +1,7 @@
 //! Every family the reference emits, by name: each family a manifest under
 //! Core's `conformance/` declares at the pinned commit is either answered by a
 //! leg of this crate or named here as not answered, with the reason and the
-//! decision that records it (DECISIONS.md D8, D13).
+//! decision that records it (DECISIONS.md D8, D13, D14).
 //!
 //! The reference's manifests say a host whose adoption reads `proposed` reports
 //! the family BY NAME rather than skipping it. This leg is where the crate does:
@@ -57,8 +57,10 @@ const NOT_ANSWERED: &[(&str, &str, &str)] = &[
     (
         "identity",
         "identity",
-        "not adopted (D13.6): a declared record's identity under its IDL vocabulary; the crate \
-         holds no IDL vocabulary reader beyond the canonical-form slice",
+        "not adopted (D14.7): a declared record's identity under its IDL vocabulary; the \
+         vocabulary is a reference test fixture, not conformance data, two lines need the v1 \
+         rendering D8 declined, and the crate holds no IDL vocabulary reader beyond the \
+         canonical-form slice; a phase of its own when a consumer must mint a record's identity",
     ),
 ];
 

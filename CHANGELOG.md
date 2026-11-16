@@ -3,6 +3,51 @@
 Every change to the crate's public API, newest first. Each entry names the Core commit the crate certifies against
 (`core-pin.json`), and whether that Core version is released.
 
+## 0.0.5-alpha.1 — 2026-11-16 — breaking
+
+Follows Core `a9592b7ff6ab7ed7d2e9ba83bbe6b13e163ce35e`, version `0.43.0`, **released** (the commit tagged `v0.43.0`; the
+pin does not move). The crate gains the query declaration of Core's Phase 46 and 398 with the query registry's grant of
+Phase 651 (the reference's D261), and answers `queryGrantLaws`. DECISIONS.md D14 records the design, its alternatives
+and the measured costs.
+
+**Breaking:**
+
+- `PolicyGate<C>` is now `PolicyGate<C, D = Capability, A = [(String, String)]>`, the gate over a declaration `D` and
+  its argument list `A`; at its defaults it is the capability gate it was. `PolicyGate::new` and `ignoring_context`
+  take a closure over `&D` and `&A`, so a closure whose declaration parameter is unannotated, built where nothing fixes
+  its type (`let g = PolicyGate::new("p", |_: &u8, c, _| … c.id …)`, then `with_gate(g)`), no longer infers (`E0282`):
+  annotate the parameter (`c: &Capability`) or build the gate where it is passed. A gate passed straight to
+  `with_gate`, or built where its type is declared, is unchanged.
+
+**Added:**
+
+- The module `query`: `Query`, `QueryParam`, `ColumnPredicate`, `SortDirection` and `SortKey` as plain data;
+  `Query::decode` (the lenient declaration reader, the filter and the order read through the seams' reader) and
+  `Query::encode` (the canonical text); `Query::admission_fault_at` and `admission_fault`, the admission gate the
+  reader and the registry run; `Query::validate_params`; the read's identity (`invocation_identity`,
+  `write_invocation_identity`) and its grant (`Query::grant`); `QueryError`, the reference's closed union with
+  `describe`; and `QueryRegistry<C = ()>` with `QueryGate<C>`, the capability registry's twin in every verb it carries
+  (`register`, `try_find`, `enumerate`, `ids`, `unregister`, `with_gate`, `gates`, `resolve`, `decide_named`,
+  `dispatch`, `under`).
+- `Grant::covers_read`: whether a grant is for exactly a read, compared with the identity as it is written.
+
+**Behaviour:** a read's grant is decided by the function the capability registry decides by (the gates' join, the
+first gate of the most refusing rank, a `NeedsApproval` lifted only by a grant for exactly the read), so one function
+decides at both registries. The read's identity is the query id, the filter's and the order's canonical text, then each
+binding's name, cell tag and payload in name order, with no hash; a cell is identified by its tag, and no page token is
+in it, so a grant covers every page of the read. Nothing the capability registry decides, keys or spells changed.
+
+**Allocation:** the zero-allocation table of `0.0.3-alpha.1` holds for every row, and a read's decision, dispatch and
+grant check at the query registry are zero too, for a filtered read as for one without, because the registry renders a
+query's filter and order text when it registers it. Asked of a declaration alone, a filtered read's identity renders
+that text. Measured in D14.8.
+
+**Certification:** `queryGrantLaws` 19 of 19 (`invocationIdentity` 11, `grantCovers` 8), on the standard profile and
+again without `std`; `capabilityLaws` 144, `capabilityDocumentLaws` 18 and `capabilityGateLaws` 41 unchanged; every
+other family the crate answered before, unchanged. Core emits no vector for the declaration reader's or the admission
+gate's refusals; `tests/query.rs` pins each to the reference's text at the pin. `identity` stays named and unanswered
+(D14.7), as does `encodingProfile` (D8).
+
 ## 0.0.4-alpha.1 — 2026-11-16 — breaking
 
 Follows Core `a9592b7ff6ab7ed7d2e9ba83bbe6b13e163ce35e`, version `0.43.0`, **released** (the commit tagged `v0.43.0`;

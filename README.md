@@ -25,6 +25,7 @@ The crate is `no_std` + `alloc` by default, so it builds for microcontroller tar
 | `column`, `field`, `unit` | the columnar `DataSource` codec, its refusals and the pinned aggregates; the schema field, its diff, fingerprint and delta; the unit of measure's parser and canonical text |
 | `propagation` | the evaluation order and its cycles, the dirty set of a change, and the incremental evaluation |
 | `capability`, `seam` | the invocable-capability contract (the value spaces, a JSON document among them; argument validation, the invocation key, the declaration codec with its declared result, the registry, its gates under a decision context of the host's type, the grant bound to the invocation's identity, the pipeline type check); the seams' refusal and declaration documents, read by one declaration-driven codec |
+| `query` | the query declaration (its parameters, result columns, effect, source, paging, filter and order) with its codec and admission gate, the identity of a read and the grant bound to it, and the query registry, whose reads are decided by the capability registry's own decision function |
 | `canonical_form`, `profile` | an IDL vocabulary's canonical form (aliases, presence, defaults); the wire profile `<name>@<major>.<minor>` |
 
 ## Conformance
@@ -36,26 +37,30 @@ when no checkout is found. Which families are run, with each leg's count, is
 [DECISIONS.md](DECISIONS.md) D8 (D6 recorded the first certification); the counts themselves are the spine's
 adoption record in each of the reference's family manifests.
 
-The pin is Core `a9592b7` (`0.43.0`, **released**: the commit tagged `v0.43.0`), CHANGELOG.md and DECISIONS.md D13.
-At that commit the crate answers every family with a manifest but three, which `tests/families.rs` names with the
-reason: `encodingProfile` (declined, D8), `identity` and `queryGrantLaws` (not adopted, D13.6 and D13.5; the crate
-holds no IDL vocabulary reader beyond the canonical-form slice and no query declaration). The capability families
-among those it answers: `capabilityLaws`, all 144 vectors (validation, the invocation key, the declaration round-trip
-with its declared result, the declaration refusals, enumeration, the pipeline type check), `capabilityDocumentLaws`,
-all 18 (the document value space through validation, the key, the round trip and the type check), and
-`capabilityGateLaws`, all 41 (the invocation's identity, grant coverage, the named decision and dispatch, each decided
-under the file's context labels and again under an integer context). The three capability families run on the
-standard profile and again on the embedded one, the library built without `std`; the embedded run executes on the
-build host, and the `thumbv7em-none-eabihf` build is a build.
+The pin is Core `a9592b7` (`0.43.0`, **released**: the commit tagged `v0.43.0`), CHANGELOG.md and DECISIONS.md D13
+and D14. At that commit the crate answers every family with a manifest but two, which `tests/families.rs` names with
+the reason: `encodingProfile` (declined, D8) and `identity` (not adopted, D14.7: its vocabulary is a test fixture of the
+reference rather than conformance data, two of its lines need the `v1` rendering D8 declined, and the crate holds no IDL
+vocabulary reader beyond the canonical-form slice). The capability and query families among those it answers:
+`capabilityLaws`, all 144 vectors (validation, the invocation key, the declaration round-trip with its declared result,
+the declaration refusals, enumeration, the pipeline type check), `capabilityDocumentLaws`, all 18 (the document value
+space through validation, the key, the round trip and the type check), `capabilityGateLaws`, all 41 (the invocation's
+identity, grant coverage, the named decision and dispatch, each decided under the file's context labels and again under
+an integer context), and `queryGrantLaws`, all 19 (the identity of a read and whether a grant covers it, over four
+declarations read through the crate's declaration reader, each coverage also decided by the query registry). These four
+families run on the standard profile and again on the embedded one, the library built without `std`; the embedded run
+executes on the build host, and the `thumbv7em-none-eabihf` build is a build. Core emits no vector for the query
+declaration reader's or its admission gate's refusals: `tests/query.rs` pins each to the reference's text at the pin.
 
-On the embedded profile the capability decision path allocates nothing once the registry is built: `decide_named` and
-`dispatch` (allowed, needing approval, granted, parked or denied), the identity written into a host's own buffer, and a
-grant's coverage are held at zero allocations by `tests/capability_alloc.rs`, a counting allocator around each call
-(DECISIONS.md D12, which also says what still allocates: building a registry, reading a tree argument, and the owned
-argument pairs a caller presents). A document argument is read to decide its membership and to spell it, so it
-allocates in proportion to the document; the same leg measures and reports it (D13.8). The crate requires `alloc` on
-every profile. This statement certifies against Core `a9592b7` (`0.43.0`, released); the crate's version is
-`0.0.4-alpha.1` (CHANGELOG.md).
+On the embedded profile the decision path allocates nothing once the registry is built, for a capability and for a
+read: `decide_named` and `dispatch` (allowed, needing approval, granted, parked or denied), the identity written into a
+host's own buffer, and a grant's coverage are held at zero allocations by `tests/capability_alloc.rs`, a counting
+allocator around each call (DECISIONS.md D12 and D14.8, which also say what still allocates: building a registry,
+reading a tree argument, the owned argument pairs a caller presents, and a filtered read's identity asked of the
+declaration alone rather than of the registry that rendered its filter). One function decides at both registries
+(D14.6). A document argument is read to decide its membership and to spell it, so it allocates in proportion to the
+document; the same leg measures and reports it (D13.8). The crate requires `alloc` on every profile. This statement
+certifies against Core `a9592b7` (`0.43.0`, released); the crate's version is `0.0.5-alpha.1` (CHANGELOG.md).
 
 ## Build
 
@@ -64,7 +69,7 @@ pwsh ./run.ps1
 ```
 
 `run.ps1` checks formatting, runs clippy, builds, runs the tests (the conformance legs among
-them, and the capability legs and the allocation leg a second time without `std`), and builds the `no_std` profile for
+them, and the capability and query legs and the allocation leg a second time without `std`), and builds the `no_std` profile for
 `thumbv7em-none-eabihf` (Cortex-M4F).
 
 ## Verification

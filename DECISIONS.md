@@ -543,7 +543,9 @@ key and one grant (`document-key-canonical` and `document-key-respelled` hold on
 to the reference's own ruling and to those two vectors: an argument reaches the registry from callers that are not an
 encoder, in any member order. An argument outside its space is written as sent, as every other space's is (D12.3).
 
-**D13.5 — `queryGrantLaws` is not adopted, and the reason is the crate's scope, not the contract.** The family asks
+**D13.5 — `queryGrantLaws` is not adopted, and the reason is the crate's scope, not the contract.**
+*Amended by D14 (2026-11-16): the operator ruled the query declaration, its admission gate and the read's identity
+built (Phase 679), and the family is answered.* The family asks
 for the identity of a read (`Query.invocationPreimage`) and whether a grant covers it, over four query declarations
 it reads from their canonical text. The crate holds no query declaration, no query codec and no query registry. What
 it calls its query seam is the refusal codec for the query seam's documents (`QueryError`, `ColumnPredicate`,
@@ -563,7 +565,8 @@ the grant the query registry gained have nothing in the crate to attach to; the 
 unchanged. Should a consumer need reads, porting the query declaration, its admission gate and the read's identity is
 a phase of its own, certified then against this family and a refusal family for the declaration.
 
-**D13.6 — the fate of every other family Core added or moved since `c7d3013`.** `capabilityDocumentLaws`: adopted
+**D13.6 — the fate of every other family Core added or moved since `c7d3013`.** *`identity`'s fate is restated,
+with the work it would take, in D14.7.* `capabilityDocumentLaws`: adopted
 (D13.2 to D13.4). `capabilityLaws`, `capabilityGateLaws`, `seamRefusals`, `skeletonDag` and `skeletonMerge`: only
 Core's adoption records for the crate moved (to `55c145f`); the vectors did not, and every one passes as before.
 `conformance/idl/contracts.json` (`idlContracts`, Core Phase 644) is not answered: it certifies a reader of an IDL
@@ -756,3 +759,62 @@ its own proof), and the fixture vocabulary emitted by Core as data beside the ta
 should be a phase of its own, taken when a consumer needs to mint a record's identity; it is not this phase's, which is
 the read's. `tests/families.rs` names it with that reason, and still fails on any family Core emits that the crate
 neither answers nor names.
+
+**D14.8 — what it costs on the embedded profile, measured.** Allocations: `tests/capability_alloc.rs` gains a third
+leg over a query registry of `queryGrantLaws`' `ledger` (no filter, no order) and `shaped` (both) under a `u8` context,
+the counting allocator of D12.1, on both profiles, debug and release, every count equal. Asserted at zero:
+`validate_params`; `decide_named` allowed, parked with no grant, with its own grant (for `shaped` too, whose filter
+and order the registry rendered when it registered it), and with another read's grant; `dispatch` granted (`shaped`)
+and parked; the identity written to a stack buffer and `Grant::covers_read`, for `ledger`. Reported, not asserted:
+asked of a declaration alone, a filtered and ordered read's identity and coverage render that text, 56 allocations of
+1,858 bytes for `shaped` (the predicate and key documents built, then written). Every row of D12's table stays at zero.
+Times: a scratch crate depending on the library built as the embedded profile builds it (`default-features = false`),
+release, x86_64 (`x86_64-pc-windows-msvc`, rustc 1.97.0), a loop of 2×10⁵ calls (2×10⁴ for the codec and `register`)
+around `black_box`, the best of five, the answer consumed; run twice, every row within 5% of the other run. The control
+is D12.9's capability row on the same machine, 225 ns against D12.9's 239.
+
+| Call | Time (ns) |
+|---|---|
+| `Query::decode`, `ledger` (267 bytes) / `shaped` (436 bytes) | 4,641 / 10,061 |
+| `Query::encode`, `shaped` | 4,638 |
+| `admission_fault`, `shaped` | 284 |
+| `register`, `shaped`, into an empty registry | 2,672 |
+| `validate_params`, one binding / seven bindings out of name order | 9 / 115 |
+| `invocation_identity` (`String`), `ledger` one binding / `shaped` one binding / `every` seven bindings | 74 / 2,172 / 661 |
+| `Grant::covers_read`, `ledger` / `shaped` (renders its filter and order) | 33 / 2,151 |
+| `decide_named`, `ledger`: allowed / parked, no grant / its own grant | 30 / 31 / 66 |
+| `decide_named`, its own grant: `shaped` / `every`, seven bindings | 176 / 508 |
+| `dispatch`, granted, `shaped` | 180 |
+| control: capability `decide_named`, its own grant, three bindings | 225 |
+
+So the registry's rendering at `register` is what keeps a filtered read's decision at 176 ns where asking the
+declaration alone takes about 2.2 µs: the filter and the order are rendered once per query, not once per decision.
+The declaration codec costs what reading and writing JSON costs (about 20 ns a byte to read, D10's reader) and runs
+when a declaration arrives, not when a read is decided.
+
+**D14.9 — the version: the gate's constructors became generic, which breaks inference in one shape of caller.**
+`PolicyGate` gains the type parameters `D` and `A` with the capability's types as their defaults, so every place that
+names `PolicyGate<C>` means what it meant. But `PolicyGate::new` and `ignoring_context` now take a closure over `&D`
+and `&A` for any `D` and `A`, and a closure whose declaration parameter is not annotated, built where no expected type
+fixes it (`let g = PolicyGate::new("p", |_: &u8, c, _| … c.id …)` before `with_gate(g)`), no longer infers: `E0282`.
+That compiles against `0.0.4-alpha.1` (`03bdc2d`) and not against this commit, measured with the same file against
+both. So the change is breaking, and `0.0.4-alpha.1` becomes `0.0.5-alpha.1`, outside every requirement on `0.0.4-*`,
+by D11.8's rule. Everything else is added: the module `query`, `Grant::covers_read`, and `PolicyGate`'s two type
+parameters at their defaults. A gate passed straight to `with_gate`, or built where its type is declared (every gate in
+the crate's own tests), is unchanged. Lost: keeping `new` and `ignoring_context` on the capability's instantiation and
+naming the read's constructors apart, which avoids the break at the price of two names for one constructor of one type;
+the reference has one, and the crate is a pre-release alpha whose version exists to say this. The pin does not move:
+Core `a9592b7` (`0.43.0`, released).
+
+**D14.10 — certified.** At Core `a9592b7`, on the hosted profile and again without `std`: `queryGrantLaws` 19 of 19
+(`invocationIdentity` 11, `grantCovers` 8), each declaration of the file's head read through the declaration reader
+and written back to the bytes it was read from, every identity answered in its written form and asserted equal to the
+built one, and every coverage vector also decided by the query registry under a gate that asks for an approval;
+`capabilityLaws` 144, `capabilityDocumentLaws` 18 and `capabilityGateLaws` 41 unchanged; D12's zero-allocation table
+at zero for every row it had, and the read's rows of D14.8 at zero, debug and release. On the hosted profile every
+other family the crate answered before, with the counts its manifests declare. `tests/query.rs` holds what no vector
+reaches, each test citing the reference's file and line: every refusal of the admission gate and of the declaration
+reader, the lenient read, the canonical text and its round trip, the `seamRefusals` predicate and order-key vectors
+read inside a declaration, validation's refusals in order, the float payload's layout, the filter and the order in
+the identity, and the registry's decision, dispatch, `under` and `unregister`. `tests/families.rs` names `identity`
+(D14.7) and `encodingProfile` (D8) as the two families the crate does not answer.
