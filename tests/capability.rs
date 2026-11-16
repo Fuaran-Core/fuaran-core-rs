@@ -80,17 +80,23 @@ fn the_family_is_twelve_vectors_per_iteration() {
     assert_eq!(vectors(&d).len(), declared("laws", "capabilityLaws"));
 }
 
-#[test]
-fn validate_args() {
-    let d = doc();
+/// Every `validateArgs` vector of `d`, answered; the count it ran.
+fn run_validate_args(d: &JVal) -> usize {
     let mut ran = 0;
-    for v in of_case(&d, "validateArgs") {
+    for v in of_case(d, "validateArgs") {
         let id = s(v, "id");
         let c = cap_of(id, s(get(v, "input"), "capability"));
         let got = verdict(c.validate_args(&args_of(v)));
         assert_eq!(got, render_canonical(get(v, "expected")), "{id}");
         ran += 1;
     }
+    ran
+}
+
+#[test]
+fn validate_args() {
+    let d = doc();
+    let ran = run_validate_args(&d);
     assert_eq!(ran, 5 * iterations(&d));
     assert_eq!(ran, 60);
 }
@@ -132,11 +138,10 @@ fn invocation_key() {
     assert_eq!(ran, 12);
 }
 
-#[test]
-fn declaration_round_trip() {
-    let d = doc();
+/// Every `declarationRoundTrip` vector of `d`, answered; the count it ran.
+fn run_declaration_round_trip(d: &JVal) -> usize {
     let mut ran = 0;
-    for v in of_case(&d, "declarationRoundTrip") {
+    for v in of_case(d, "declarationRoundTrip") {
         let id = s(v, "id");
         let input = s(get(v, "input"), "declaration");
         let c = Capability::decode(input).unwrap_or_else(|e| panic!("{id}: {e:?}"));
@@ -148,6 +153,13 @@ fn declaration_round_trip() {
         );
         ran += 1;
     }
+    ran
+}
+
+#[test]
+fn declaration_round_trip() {
+    let d = doc();
+    let ran = run_declaration_round_trip(&d);
     assert_eq!(ran, iterations(&d));
     assert_eq!(ran, 12);
 }
@@ -236,11 +248,10 @@ fn typed(r: Result<(), PipelineError>) -> String {
     render_canonical(&JVal::Obj(members))
 }
 
-#[test]
-fn pipeline_type_check() {
-    let d = doc();
+/// Every `pipelineTypeCheck` vector of `d`, answered; the count it ran.
+fn run_pipeline_type_check(d: &JVal) -> usize {
     let mut ran = 0;
-    for v in of_case(&d, "pipelineTypeCheck") {
+    for v in of_case(d, "pipelineTypeCheck") {
         let id = s(v, "id");
         let input = get(v, "input");
         let r = CapabilityRegistry::new()
@@ -255,6 +266,13 @@ fn pipeline_type_check() {
         );
         ran += 1;
     }
+    ran
+}
+
+#[test]
+fn pipeline_type_check() {
+    let d = doc();
+    let ran = run_pipeline_type_check(&d);
     assert_eq!(ran, 2 * iterations(&d));
     assert_eq!(ran, 24);
 }
@@ -300,16 +318,7 @@ fn the_document_family_is_the_four_cases_its_manifest_counts() {
 
 #[test]
 fn document_validate_args() {
-    let d = document_doc();
-    let mut ran = 0;
-    for v in of_case(&d, "validateArgs") {
-        let id = s(v, "id");
-        let c = cap_of(id, s(get(v, "input"), "capability"));
-        let got = verdict(c.validate_args(&args_of(v)));
-        assert_eq!(got, render_canonical(get(v, "expected")), "{id}");
-        ran += 1;
-    }
-    assert_eq!(ran, 9);
+    assert_eq!(run_validate_args(&document_doc()), 9);
 }
 
 #[test]
@@ -338,43 +347,12 @@ fn document_invocation_key() {
 
 #[test]
 fn document_declaration_round_trip() {
-    let d = document_doc();
-    let mut ran = 0;
-    for v in of_case(&d, "declarationRoundTrip") {
-        let id = s(v, "id");
-        let input = s(get(v, "input"), "declaration");
-        let c = Capability::decode(input).unwrap_or_else(|e| panic!("{id}: {e:?}"));
-        assert_eq!(c.encode(), s(get(v, "expected"), "declaration"), "{id}");
-        assert_eq!(
-            c.try_encode().as_deref(),
-            Ok(input),
-            "{id}: the guarded encode"
-        );
-        ran += 1;
-    }
-    assert_eq!(ran, 2);
+    assert_eq!(run_declaration_round_trip(&document_doc()), 2);
 }
 
 #[test]
 fn document_pipeline_type_check() {
-    let d = document_doc();
-    let mut ran = 0;
-    for v in of_case(&d, "pipelineTypeCheck") {
-        let id = s(v, "id");
-        let input = get(v, "input");
-        let r = CapabilityRegistry::new()
-            .register(cap_of(id, s(input, "capability")))
-            .unwrap_or_else(|e| panic!("{id}: {}", e.describe()));
-        let p = CapabilityPipeline::decode(s(input, "pipeline"))
-            .unwrap_or_else(|e| panic!("{id}: the pipeline does not decode: {e:?}"));
-        assert_eq!(
-            typed(p.type_check(&r)),
-            render_canonical(get(v, "expected")),
-            "{id}"
-        );
-        ran += 1;
-    }
-    assert_eq!(ran, 5);
+    assert_eq!(run_pipeline_type_check(&document_doc()), 5);
 }
 
 // ─── The document space, beyond the vectors ──────────────────────────────────

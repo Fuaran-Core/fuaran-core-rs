@@ -104,14 +104,18 @@ fn ceiling() -> PolicyGate<u8> {
     )
 }
 
-fn registry() -> CapabilityRegistry<u8> {
-    [WRITE, READ, ERASE]
+/// A registry of the given declarations, with no gate.
+fn registry_of(declarations: &[&str]) -> CapabilityRegistry<u8> {
+    declarations
         .iter()
         .fold(CapabilityRegistry::empty(), |r, text| {
             r.register(Capability::decode(text).expect("a declaration"))
                 .expect("admitted")
         })
-        .with_gate(ceiling())
+}
+
+fn registry() -> CapabilityRegistry<u8> {
+    registry_of(&[WRITE, READ, ERASE]).with_gate(ceiling())
 }
 
 /// A text of at most `N` bytes on the stack: where a host with no allocation
@@ -312,19 +316,13 @@ const DOCUMENT: &str = r#"{"$type":"capability","determinism":"clock","id":"cap-
 /// A registry holding the document capability beside `read`, under a gate that
 /// parks the document for approval in the untrusted context.
 fn document_registry() -> CapabilityRegistry<u8> {
-    [DOCUMENT, READ]
-        .iter()
-        .fold(CapabilityRegistry::empty(), |r, text| {
-            r.register(Capability::decode(text).expect("a declaration"))
-                .expect("admitted")
-        })
-        .with_gate(PolicyGate::new(
-            "review",
-            |ctx: &u8, c: &Capability, _: &[(String, String)]| match (*ctx, c.id.as_str()) {
-                (UNTRUSTED, "cap-document") => PolicyDecision::NeedsApproval,
-                _ => PolicyDecision::Allow,
-            },
-        ))
+    registry_of(&[DOCUMENT, READ]).with_gate(PolicyGate::new(
+        "review",
+        |ctx: &u8, c: &Capability, _: &[(String, String)]| match (*ctx, c.id.as_str()) {
+            (UNTRUSTED, "cap-document") => PolicyDecision::NeedsApproval,
+            _ => PolicyDecision::Allow,
+        },
+    ))
 }
 
 /// A document argument is read to decide its membership, and read and written
