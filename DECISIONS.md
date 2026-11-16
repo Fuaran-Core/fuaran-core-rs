@@ -113,6 +113,8 @@ this phase's, and both are named under the write-up's `SUCCESSOR`.
 
 *Amended by D13 (2026-11-16): the spine does not answer every family the reference emits; `tests/families.rs` names
 each one it does not, with the reason (`encodingProfile`, `identity`, `queryGrantLaws` at Core `0.43.0`).*
+*Amended by D14 (2026-11-16): `queryGrantLaws` is answered (`tests/query_grant.rs`), and the rule that a typed seam
+value waits for a consumer no longer holds for the query declaration (D14.1).*
 
 Phase 564 extends the certification from five families to every family the reference emits under
 `conformance/`, at the Core commit `core-pin.json` names. The counts are the reference's to record: each family's
@@ -634,3 +636,123 @@ double spells (`1e400`, `-1e400`), the bare `NaN` and `Infinity`, a `null` below
 are each no document; the canonical text sorts by UTF-16 code unit and collapses a negative zero; the codec reads the
 type name as a string; the relation's nine document cases; and a number space refuses `NaN`, `Infinity`, `-Infinity`,
 `1e400` and `-1e400` as an argument (D260.7).
+
+## D14 — 2026-11-16 — the crate holds the query declaration, its codec and admission gate, the read's identity, and a query registry whose grant check is decided by the capability registry's own function
+
+Phase 679 ports what D13.5 named: the query declaration (the reference's `Query`, its `QueryParam`, `ColumnPredicate`
+and `SortKey`), its declaration reader and writer, the admission gate the registry and the reader share
+(`QueryRegistry.admissionFaultAt`), the identity of a read and the grant bound to it (D261.3), and a query registry
+that decides a read under a decision context and a grant through the function the capability registry decides by
+(D261.7). Certified against `queryGrantLaws` at Core `a9592b7` (`0.43.0`, released); the pin does not move.
+
+**D14.1 — the operator ruled that this is built, and D8's consumer rule is amended for it.** D8 offers no typed value
+per seam union until a consumer needs one, and D13.5 declined the family on that rule: the crate's one consumer, a
+device host, decides capabilities and makes no query reads. The operator has ruled that the query declaration, its
+admission gate and the read's identity are built regardless (Phase 679), so that a host which reads, or which must
+hold a read's grant, has the reference's contract rather than a lookalike. That ruling is recorded here and not argued
+again. What D13.5 refused stays refused: an identity with no declaration behind it, and a declaration whose refusals
+nothing certifies. So the whole admission gate is ported, and each refusal the reference's vectors do not reach is
+pinned by a port-side test to the reference's text (D14.4).
+
+**D14.2 — the representation: a module of its own, the reference's records as plain data.** `src/query.rs` holds
+`QueryParam { name, ty, required }`, `ColumnPredicate` (eight cases: the five comparisons carrying a column and a
+`Cell`, `Contains` a column and a text, `IsNull` and `IsNotNull` a column), `SortDirection`, `SortKey { column,
+direction }` and `Query { id, params, result_schema, effect, source, timeout_ms, page_size, filter, order_by }`, the
+twins of the reference's types, built from the crate's own column types (`ColumnType`, `Cell`, `Field`, `DataSource`)
+and the capability's `EffectClass`. The paging and time budget are `Option<i32>`, the reference's `int option`, read
+by `Decoder.int`. The wire member `where` is the field `filter`, because `where` is a Rust keyword. `QueryError` is the
+whole of the reference's closed union (twenty cases), so a host's resolver refuses in the seam's own vocabulary.
+Fields are public, as `Capability`'s are: a declaration a host builds by hand is admitted or refused at `register`, as
+the reference's record is. Five alternatives lost. Putting the declaration in `src/seam.rs`: that module is the
+declaration-driven codec of the seams' documents and holds no typed value; a typed declaration, its gate and a
+registry are a layer above it, as `capability` is. `r#where` as the field name: legal, and every reader would write
+`q.r#where`. A comparison carrying its column type beside the literal: the reference holds the `Cell` and derives the
+type (`Cell.typeOf`), and a second copy of the type could disagree with the cell. A predicate held as the seam reader's
+re-encoded document, untyped: admission and the identity read the cell, and a host matching on a predicate would have
+to parse it. A declaration validated at construction and opaque: the reference's record is data and its gate is the
+registry's and the reader's, and a refusing constructor would be a third place the gate runs.
+
+**D14.3 — the codec: the lenient reader, through the seams' one reader for the filter and the order.**
+`Query::decode` reads a declaration as `QueryCodec.decodeDetailedWith ReadPolicy.Lenient` does, in its order: `$type`
+(`query`), `id`, `params` (each `name`, `type` by its tag, `required`), `resultSchema` (each a field the column codec
+reads, else `OutOfRange` at its index), `effect` (the capability codec's reader), `timeoutMs`, `pageSize`, `where`,
+`orderBy`, `source` (any JSON, then the column codec, whose refusal is `OutOfRange` at `source`), and last the admission
+gate, whose refusal is `OutOfRange` at the member at fault with the registry's sentence. An unknown member is read
+past. Each `where` item and `orderBy` key is read by the seam module's declaration-driven reader (`seam::read_at` over
+`COLUMN_PREDICATE` and `SORT_KEY`: D8's one reader, certified by `seamRefusals`), and the typed value is a total
+projection of what that reader answers, so a predicate's refusals are that reader's, on code and path, and no second
+predicate reader exists. `Query::encode` writes the canonical text of `QueryCodec.encode`: `timeoutMs`, `pageSize`,
+`where` and `orderBy` omitted when absent or empty, and a comparison's literal written as the column codec writes a
+cell of the cell's own type (`QueryWire.literalJson`, with its fallbacks for a literal its type cannot hold, so the
+writer is total). Not ported, with no vector and no consumer: the strict reading (the capability declaration's port
+reads leniently only, D11), the result page and its `Deferred` envelope, `decodeArgs`, `toJsonSchema`, and a typed
+writer of `QueryError` (the seam module reads and writes its document). Two alternatives lost: a hand-written predicate
+reader, which D8 rejected for every seam union; and the strict reading now, a surface no vector certifies.
+
+**D14.4 — the admission gate, whole.** `admission_fault_at` is the twin of `QueryRegistry.admissionFaultAt`, and
+`register` and the reader both run it, so a declaration that decodes is one `register` admits. In order: a parameter
+named twice (`DuplicateParam`, the first repeat, at `params`); then each `where` predicate in turn (at `where.i`): a
+column the result does not declare (`UnknownColumn`, naming the result's columns), `contains` on a column that is not
+a string (`PredicateNotApplicable`), a `Null` literal (`IllFormedLiteral`, "a null literal compares with nothing; test
+for absence with isNull"), a literal of another type (`PredicateTypeMismatch`; a timestamp literal fits any timestamp
+column at least as fine as its own unit, Phase 422), and a literal its column cannot carry (`IllFormedLiteral`, with the
+column layer's reason: `Column::of_cells`, then `Table::validate`); then each `orderBy` key (at `orderBy.i`): an
+undeclared column (`UnknownColumn`), then a column named before (`DuplicateSortColumn`, at the second). `register`
+checks the id first (`DuplicateQuery`). Each refusal answers `QueryError::describe`, the twin of the reference's
+sentence. Core emits no vector for any of these refusals (no family reads a query declaration): the port's tests pin
+each one to the reference's text at the pin, by file and line, and the envelope asks Core for vectors.
+
+**D14.5 — the read's identity, field by field, as D261.3 fixes it.** `Query::invocation_identity(args)` is the twin of
+`Query.invocationPreimage`: the canonical pre-image (`hash::canonical_fields`, no hash) of the query id; then, for a
+declaration with a filter, the fields `""`, `w` and the canonical text of its `where` array, and for one with an order
+`""`, `o` and the canonical text of its `orderBy` array, filter first; then each binding in name order (ordinal, equal
+names in list order, as the reference's stable sort keeps them), three fields each: its name, its cell's tag (`i` int,
+`f` float, `b` bool, `s` string, `d` date, `t` timestamp, `m` decimal, `n` null) and its payload (an integer's decimal
+digits; a float in the canonical number form, a negative zero `0`, a non-finite one its quoted token, as
+`FloatLayout.canonical`; `1` or `0`; a string, date, timestamp or decimal as it stands, never canonicalised; empty for a
+null). A cell is identified by its tag, not by its parameter's type, so an integer bound to a float parameter and the
+float of the same value are two reads. No page token is in it (D261.4). `Query::grant` mints the grant for exactly the
+read, and `Grant::covers_read` compares a grant with the identity as it is written, stopping at the first byte that
+differs (D12.3's form) and building nothing. Three alternatives lost, each the reference's own: the capture key (a
+32-bit hash, D249.3); a cell canonicalised by its parameter's type (D261.3); the page token in the identity (D261.4).
+The capture keys (`invocationKey`, `invocationKeyPage`) are not ported: nothing in the crate captures a read, and the
+vectors that present one as a grant name it as text.
+
+**D14.6 — one function decides at both registries.** `PolicyGate<C, D = Capability, A = [(String, String)]>` is the
+gate over a declaration `D` and its argument list `A`, the twin of the reference's `PolicyGate<'Ctx, 'Decl, 'Args>`;
+at its defaults it is the capability gate it was. The gates' join with the grant's lift, the twin of
+`RegistryPolicy.decideGranted`, is one crate function, `decide_granted`, which `CapabilityRegistry` and the new
+`QueryRegistry<C = ()>` both call: the first gate of the most refusing rank decides, and a `NeedsApproval` is lifted to
+`Allow` when the registry's coverage check answers that the grant is for exactly this invocation, a check asked only
+then. The query registry is the capability registry's twin in every verb it carries (`new`, `empty`, `register`,
+`try_find`, `enumerate`, `ids`, `unregister`, `with_gate`, `gates`, `resolve`, `decide_named`, `dispatch`, `under`):
+resolve (`NoSuchQuery` naming the held ids), validate (`Query::validate_params`, the twin of `Query.validateParams`: a
+repeated name, then an unknown name or a cell that does not widen to its parameter's type, then required names left
+out, then required names bound only to `Null`), then decide; a dispatch refuses `QueryPolicyRefused` or
+`QueryApprovalRequired` from that decision and runs the host's resolver exactly once on `Allow`
+(`FnOnce(&Query) -> Result<T, QueryError>`, D11.5's performer). The registry renders each query's filter and order
+text once, when it registers it, and its grant check writes the identity from that text, so deciding a read allocates
+nothing once the registry is built, for a read with a filter as for one without (D14.8). Not ported, with no vector
+and no consumer: the denial observers (D11.3's reason), `decide` (the decision folded into a `Deny`), the paging,
+captured and replayed dispatch verbs, `Query.invoke` with its `Deferred` envelope and `ResolveFault`,
+`validateParamsAll`, and `replace`, `restrict` and `union`. Three alternatives lost. A generic seam type both
+registries wrap (the reference's `Seam`): it would restructure the capability registry and its D12 table for nothing
+the decision needs, since the decision is the one function and the rest is each registry's own lookup and validation.
+A trait the declarations implement: the same sharing with more ceremony. A second gate type and join for reads: two
+functions would decide, which D255.6 and D261.7 forbid.
+
+**D14.7 — the `identity` family stays named, not adopted, and should be a phase of its own.** `identity`
+(`conformance/identity/`, Core Phase 578) certifies a declared record's identity: the record read through its IDL
+vocabulary, its canonical form under it (the vocabulary's key order, absent optionals omitted, a member at its default
+not written), rendered under a named profile (`v1` or `v2`) and hashed. The crate cannot answer it honestly. The
+vocabulary is a test fixture of the reference (`tests/Fuaran.Core.Tests.Fixtures/IdentityIdl.fs`), not conformance
+data, so a port would restate it by hand from prose, and nothing would certify that the restatement is the vocabulary
+the lines were computed under. Two of its nine lines are rendered under `v1`, whose short escapes for line feed,
+carriage return and tab are the profile D8 declined; writing them needs a second escape mode beside the one
+`src/json/escape.rs` proves. And it needs an IDL vocabulary reader and writer (a tagged root, key order, `Optional`,
+`OmitDefault`), of which the crate holds only the canonical-form slice (`canonical_form`). The work: a vocabulary
+interpreter for a record's canonical form, the `v1` rendering as a writer of its own (outside the proved escape, or with
+its own proof), and the fixture vocabulary emitted by Core as data beside the table, which Core should be asked for. It
+should be a phase of its own, taken when a consumer needs to mint a record's identity; it is not this phase's, which is
+the read's. `tests/families.rs` names it with that reason, and still fails on any family Core emits that the crate
+neither answers nor names.
