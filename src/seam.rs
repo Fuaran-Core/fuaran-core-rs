@@ -168,6 +168,7 @@ pub static VALUE_SPACE: UnionDecl = UnionDecl {
         case("enum", &[req("values", STRS)]),
         case("anyString", &[]),
         case("slotTree", &[opt("slotKind", Slot::Str)]),
+        case("document", &[opt("documentType", Slot::Str)]),
     ],
 };
 

@@ -376,3 +376,134 @@ fn document_pipeline_type_check() {
     }
     assert_eq!(ran, 5);
 }
+
+// ─── The document space, beyond the vectors ──────────────────────────────────
+
+/// What the family's vectors do not reach, held to the reference's rules
+/// (DECISIONS.md D13): a number no finite double spells, a `null` below the
+/// root, an unpaired surrogate and a bare non-finite token are each no
+/// document; the refusal is `ArgOutOfSpace` carrying the space, in words.
+#[test]
+fn a_document_holds_no_null_no_non_finite_number_and_no_ill_formed_string() {
+    let d = document_doc();
+    let text = s(get(&vectors(&d)[0], "input"), "capability");
+    let c = cap_of("document-space", text);
+    for (doc, member) in [
+        (r#"{"a":1e400}"#, false),
+        (r#"[-1e400]"#, false),
+        (r#"{"a":NaN}"#, false),
+        (r#"[Infinity]"#, false),
+        (r#"{"a":[1,{"b":null}]}"#, false),
+        (r#""\ud800""#, false),
+        (r#"{"a":"\ud83d\ude00"}"#, true),
+        (r#"{"a":1.7976931348623157e308}"#, true),
+        (r#"-0"#, true),
+        (r#"true"#, true),
+        (r#"{}"#, true),
+    ] {
+        let got = c.validate_args(&[("d0".to_string(), doc.to_string())]);
+        if member {
+            assert_eq!(got, Ok(()), "{doc} is a document");
+        } else {
+            match got {
+                Err(InvokeError::ArgOutOfSpace { addr, space, got }) => {
+                    assert_eq!((addr.as_str(), got.as_str()), ("d0", doc));
+                    assert_eq!(
+                        space.describe(),
+                        "a document of type 'Order': well-formed JSON"
+                    );
+                }
+                other => panic!("{doc}: {other:?}"),
+            }
+        }
+    }
+}
+
+/// One document, one spelling: the canonical text sorts members by UTF-16 code
+/// unit, writes the canonical number form and the canonical escape, and
+/// collapses a negative zero; a string that is no document has none.
+#[test]
+fn a_document_has_one_canonical_text() {
+    use fuaran_core::capability::document_of;
+    assert_eq!(
+        document_of(
+            r#"{ "b" : [ true, "x\ny", 2.50 ],
+  "a" : 1 }"#
+        )
+        .as_deref(),
+        Some(r#"{"a":1,"b":[true,"x\u000ay",2.5]}"#)
+    );
+    assert_eq!(
+        document_of("{\"\u{e000}\":1,\"\u{1f600}\":2}").as_deref(),
+        Some("{\"\u{1f600}\":2,\"\u{e000}\":1}"),
+        "members sorted by UTF-16 code unit, not by scalar value"
+    );
+    assert_eq!(document_of("[-0.0,1E2]").as_deref(), Some("[0,100]"));
+    assert_eq!(document_of("{\"a\":1,\"a\":1}"), None);
+    assert_eq!(document_of("null"), None);
+    assert_eq!(document_of(""), None);
+}
+
+/// The space's codec and its relation: the type name round-trips and is read
+/// as a string; the documents are a family of their own.
+#[test]
+fn the_document_space_codec_and_relation() {
+    use fuaran_core::capability::ValueSpace::{self, *};
+    let order = || Document(Some("Order".to_string()));
+    let receipt = || Document(Some("Receipt".to_string()));
+    for (required, available, admits) in [
+        (Document(None), order(), true),
+        (Document(None), Document(None), true),
+        (order(), order(), true),
+        (order(), receipt(), false),
+        (order(), Document(None), false),
+        (AnyString, order(), false),
+        (SlotTree(None), Document(None), false),
+        (Document(None), SlotTree(None), false),
+        (Document(None), AnyString, false),
+    ] {
+        assert_eq!(
+            required.subsumes(&available),
+            admits,
+            "{required:?} admits {available:?}"
+        );
+    }
+    let space_of_text = |text: &str| -> Result<ValueSpace, fuaran_core::decode::DecodeError> {
+        let v = fuaran_core::decode::parse(text, &fuaran_core::json::JsonLimits::STRICT)?;
+        fuaran_core::capability::space_of(&fuaran_core::decode::Cursor::root(&v))
+    };
+    for space in [Document(None), order()] {
+        let text = render_canonical(&fuaran_core::capability::space_to_json(&space));
+        assert_eq!(space_of_text(&text), Ok(space), "{text}");
+    }
+    assert_eq!(
+        render_canonical(&fuaran_core::capability::space_to_json(&order())),
+        r#"{"$type":"document","documentType":"Order"}"#
+    );
+    let e = space_of_text(r#"{"$type":"document","documentType":1}"#).unwrap_err();
+    assert_eq!(e.code, fuaran_core::decode::DecodeCode::WrongKind);
+    assert_eq!(Document(None).describe(), "a document: well-formed JSON");
+    assert_eq!(Document(None).well_formed(), Ok(()));
+    assert!(!Document(None).is_count());
+}
+
+/// A float argument that no finite double spells is out of a number space, as
+/// the reference refuses it (D260.7): the token, the overflow and the sentinel.
+#[test]
+fn a_number_space_refuses_a_non_finite_argument() {
+    let c = Capability::decode(r#"{"$type":"capability","determinism":"deterministic","id":"f","placement":{"$type":"server"},"result":{"$type":"nothing"},"signature":{"effect":{"determinism":"deterministic","host":"pure"},"holes":[{"addr":"x","kind":"value","name":"x","required":true,"space":{"$type":"floatRange","max":1.7976931348623157e308,"min":-1.7976931348623157e308}}],"name":"f"}}"#)
+        .expect("a declaration");
+    for x in ["NaN", "Infinity", "-Infinity", "1e400", "-1e400"] {
+        assert!(
+            matches!(
+                c.validate_args(&[("x".to_string(), x.to_string())]),
+                Err(InvokeError::ArgOutOfSpace { .. })
+            ),
+            "{x}"
+        );
+    }
+    assert_eq!(
+        c.validate_args(&[("x".to_string(), "1e308".to_string())]),
+        Ok(())
+    );
+}

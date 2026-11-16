@@ -12,8 +12,9 @@
 //! they stand on — the value space (`Space`, `SpaceCodec`), the two-axis effect
 //! class (`Effect`, `EffectCodec`), the signature entry and its well-formedness
 //! check (`Signature.validate`). Certified against Core's
-//! `laws/capability-laws.json` (`tests/capability.rs`) and
-//! `laws/capability-gate-laws.json` (`tests/capability_gate.rs`).
+//! `laws/capability-laws.json` and `laws/capability-document-laws.json`
+//! (`tests/capability.rs`) and `laws/capability-gate-laws.json`
+//! (`tests/capability_gate.rs`).
 //!
 //! The wire carries the declaration and a typed invocation, never the body:
 //! the core validates, keys, decides and round-trips. Running the body, and
@@ -198,6 +199,10 @@ pub enum ValueSpace {
     AnyString,
     /// A `"kind"`-tagged wire document, of the constrained kind when one is given.
     SlotTree(Option<String>),
+    /// A well-formed JSON document, of the named type when one is given: the
+    /// name is carried and compared, never interpreted. Unbounded, admitted by no
+    /// scalar space and by no tree space (DECISIONS.md D13).
+    Document(Option<String>),
 }
 
 /// Why a value space is not well-formed. Twin of `SpaceFault`.
@@ -224,6 +229,33 @@ pub fn slot_kind_of(s: &str) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// A document argument as the strict reader reads it: `Some` when the string is
+/// one JSON document holding no `null`. The reader refuses a repeated member, an
+/// ill-formed string and a number no finite double spells, so what is read has a
+/// canonical rendering of its own. Read without recursion (D10); the `null`
+/// check walks the value with an explicit stack.
+fn read_document(s: &str) -> Option<JVal> {
+    let v = crate::json::parse(s).ok()?;
+    let mut pending: Vec<&JVal> = vec![&v];
+    while let Some(x) = pending.pop() {
+        match x {
+            JVal::Null => return None,
+            JVal::Arr(items) => pending.extend(items),
+            JVal::Obj(members) => pending.extend(members.iter().map(|(_, m)| m)),
+            JVal::Bool(_) | JVal::Num(_) | JVal::Str(_) => {}
+        }
+    }
+    Some(v)
+}
+
+/// The one spelling of a document argument: `Some` its cross-host canonical
+/// text (members sorted, no white space, the canonical number form and string
+/// escape) when the string is a document, `None` otherwise. Twin of
+/// `Space.documentOf` (DECISIONS.md D13).
+pub fn document_of(s: &str) -> Option<String> {
+    read_document(s).map(|v| render_canonical(&v))
 }
 
 /// An integer argument as the seam reads it: an optional `-` and decimal digits,
@@ -306,22 +338,25 @@ impl ValueSpace {
 
     /// The one spelling a value in the space is handed on as, or `None` where the
     /// string is not in the space: an integer in its shortest decimal form, a
-    /// number in the canonical number form, every other value as sent. Twin of
+    /// number in the canonical number form, a document in its cross-host
+    /// canonical text ([`document_of`]), every other value as sent. Twin of
     /// `Space.canonical`.
     pub fn canonical(&self, s: &str) -> Option<String> {
         match self {
             ValueSpace::IntRange(..) | ValueSpace::FloatRange(..) => {
                 self.respelled(s).map(|r| r.to_string())
             }
+            ValueSpace::Document(_) => document_of(s),
             _ => self.validate(s).then(|| s.to_string()),
         }
     }
 
     /// Is the value in the space — exactly when it has a canonical spelling there
     /// — decided on the value, without spelling it: a number read and compared
-    /// with the bounds, a length counted, a member compared. A tree is the one
-    /// space whose membership builds anything: its document is read by the strict
-    /// reader (D12). Twin of `Space.validate`.
+    /// with the bounds, a length counted, a member compared. A tree and a document
+    /// are the spaces whose membership builds anything: each is read by the strict
+    /// reader (D12, D13), and a document's text is not rendered. Twin of
+    /// `Space.validate`.
     pub fn validate(&self, s: &str) -> bool {
         match self {
             ValueSpace::IntRange(..) | ValueSpace::FloatRange(..) => self.respelled(s).is_some(),
@@ -336,6 +371,7 @@ impl ValueSpace {
                 (Some(_), None) => true,
                 (Some(k), Some(c)) => &k == c,
             },
+            ValueSpace::Document(_) => read_document(s).is_some(),
         }
     }
 
@@ -379,14 +415,20 @@ impl ValueSpace {
             ValueSpace::SlotTree(Some(k)) => {
                 format!("a tree of kind '{k}': a JSON object whose \"kind\" is '{k}'")
             }
+            ValueSpace::Document(None) => "a document: well-formed JSON".to_string(),
+            ValueSpace::Document(Some(t)) => {
+                format!("a document of type '{t}': well-formed JSON")
+            }
         }
     }
 
     /// Does this space (the one required) admit every value `available` can
     /// hold: the bounds compared, an integer range read as numbers where a number
-    /// is required, a string length measured in UTF-16 code units. The one space
-    /// relation a pipeline's edges and a call's declared output are checked by.
-    /// Twin of `Space.subsumes`.
+    /// is required, a string length measured in UTF-16 code units; the trees and
+    /// the documents each a family of their own, an unconstrained one admitting
+    /// every member of its family and a constrained one only the same name. The
+    /// one space relation a pipeline's edges and a call's declared output are
+    /// checked by. Twin of `Space.subsumes`.
     pub fn subsumes(&self, available: &ValueSpace) -> bool {
         use ValueSpace::*;
         match (self, available) {
@@ -406,6 +448,8 @@ impl ValueSpace {
             }
             (SlotTree(None), SlotTree(_)) => true,
             (SlotTree(Some(rk)), SlotTree(Some(ak))) => rk == ak,
+            (Document(None), Document(_)) => true,
+            (Document(Some(rt)), Document(Some(at))) => rt == at,
             _ => false,
         }
     }
@@ -876,13 +920,15 @@ impl Capability {
     /// of `Capability.bindingFields`; the key hashes these fields and the
     /// identity keeps them.
     ///
-    /// Nothing is built (DECISIONS.md D12): the order is found by selection, each
+    /// Nothing is built but a document's text (DECISIONS.md D12, D13): the order is found by selection, each
     /// pass taking the least binding after the one last written, so it costs
     /// `O(n²)` comparisons of addresses and no vector; a number is spelled
-    /// through `core::fmt` into the field ([`Respelled`]); and every value but a
-    /// number is written as sent, which is its canonical spelling where it lies
-    /// in its space and its own spelling where it does not, so no other space is
-    /// consulted (a tree argument is never parsed here).
+    /// through `core::fmt` into the field ([`Respelled`]); a document in a
+    /// document hole is written as its canonical text ([`document_of`]), which
+    /// reads and renders it, the one binding here that builds anything (D13);
+    /// and every other value is written as sent, which is its canonical spelling
+    /// where it lies in its space and its own spelling where it does not (a tree
+    /// argument is never parsed here).
     fn write_binding_fields<W: Write + ?Sized>(
         &self,
         args: &[(String, String)],
@@ -901,12 +947,19 @@ impl Capability {
         {
             let (addr, value) = &args[at];
             write_canonical_field(addr, out)?;
-            let respelled = match self.hole(addr).map(|h| &h.kind) {
-                Some(HoleKind::Value(sp) | HoleKind::Repeat(sp)) => sp.respelled(value),
+            let space = match self.hole(addr).map(|h| &h.kind) {
+                Some(HoleKind::Value(sp) | HoleKind::Repeat(sp)) => Some(sp),
                 _ => None,
             };
-            match respelled {
-                Some(r) => write!(FieldBody(&mut *out), "{r}")?,
+            match space {
+                Some(ValueSpace::Document(_)) => match document_of(value) {
+                    Some(text) => FieldBody(&mut *out).write_str(&text)?,
+                    None => FieldBody(&mut *out).write_str(value)?,
+                },
+                Some(sp) => match sp.respelled(value) {
+                    Some(r) => write!(FieldBody(&mut *out), "{r}")?,
+                    None => FieldBody(&mut *out).write_str(value)?,
+                },
                 None => FieldBody(&mut *out).write_str(value)?,
             }
             out.write_char(FOLD_SEP)?;
@@ -1085,7 +1138,7 @@ fn jstr(s: &str) -> JVal {
 }
 
 /// A value space as its wire document (`"$type"`, `min` / `max`, `values`,
-/// `slotKind`). Twin of `SpaceCodec.toJson`.
+/// `slotKind`, `documentType`). Twin of `SpaceCodec.toJson`.
 pub fn space_to_json(s: &ValueSpace) -> JVal {
     match s {
         ValueSpace::IntRange(lo, hi) => typed(
@@ -1114,6 +1167,10 @@ pub fn space_to_json(s: &ValueSpace) -> JVal {
         ValueSpace::SlotTree(c) => typed(
             "slotTree",
             c.iter().map(|k| ("slotKind", jstr(k))).collect(),
+        ),
+        ValueSpace::Document(c) => typed(
+            "document",
+            c.iter().map(|t| ("documentType", jstr(t))).collect(),
         ),
     }
 }
@@ -1290,13 +1347,14 @@ fn one_of<'a, T: Copy>(at: &Cursor<'a>, table: &[(&str, T)], what: &str) -> Resu
 }
 
 /// The value spaces' `"$type"` tags, in the reference's case order.
-const SPACE_TAGS: [&str; 6] = [
+const SPACE_TAGS: [&str; 7] = [
     "intRange",
     "floatRange",
     "stringLen",
     "enum",
     "anyString",
     "slotTree",
+    "document",
 ];
 
 /// Read a value space from its wire document, dispatched on `"$type"`. Twin of
@@ -1315,11 +1373,16 @@ pub fn space_of(c: &Cursor<'_>) -> Result<ValueSpace, DecodeError> {
                 .collect::<Result<_, _>>()?,
         ),
         "anyString" => ValueSpace::AnyString,
-        _ => ValueSpace::SlotTree(match c.optional("slotKind")? {
-            Some(k) => Some(k.string()?.to_string()),
-            None => None,
-        }),
+        "slotTree" => ValueSpace::SlotTree(optional_str(c, "slotKind")?),
+        _ => ValueSpace::Document(optional_str(c, "documentType")?),
     })
+}
+
+/// An optional string member: absent is `None`, present must be a string.
+fn optional_str(c: &Cursor<'_>, name: &str) -> Result<Option<String>, DecodeError> {
+    c.optional(name)?
+        .map(|v| v.string().map(String::from))
+        .transpose()
 }
 
 /// Read a declared result as [`result_to_json`] writes it, dispatched on
@@ -1365,10 +1428,7 @@ fn entry_of(c: &Cursor<'_>) -> Result<SigEntry, DecodeError> {
         .optional("actionEffect")?
         .map(|e| effect_of(&e))
         .transpose()?;
-    let slot = match c.optional("slotKind")? {
-        Some(k) => Some(k.string()?.to_string()),
-        None => None,
-    };
+    let slot = optional_str(c, "slotKind")?;
     let kind = match (kind, space, action) {
         (0, Some(s), _) => HoleKind::Value(s),
         (2, Some(s), _) => HoleKind::Repeat(s),
@@ -2024,6 +2084,7 @@ fn space_tag(s: &ValueSpace) -> &'static str {
         ValueSpace::Enum(_) => "enum",
         ValueSpace::AnyString => "anyString",
         ValueSpace::SlotTree(_) => "slotTree",
+        ValueSpace::Document(_) => "document",
     }
 }
 
