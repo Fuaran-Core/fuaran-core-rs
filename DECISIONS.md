@@ -483,3 +483,97 @@ answer differs, and the comparison was shown to fail when one side's arguments w
 **D12.11 — the version.** The public registry and seam types moved (D12.4's field types, `decide_named`'s answer,
 `PolicyGate::new`'s name), so `0.0.2-alpha.1` becomes `0.0.3-alpha.1`, outside every requirement on `0.0.2-*`, by D11.8's
 rule. The pin does not move: Core `c7d3013` (`0.43.0`, a draft, not released).
+
+## D13 — 2026-11-16 — the port follows Core 0.43.0 as released: a document is a value space of its own, read by the strict reader and keyed by its canonical text, and the query registry's grant is not ported
+
+Phase 665 moves `core-pin.json` from the `0.43.0` draft (`c7d3013`) to the commit Core released as `0.43.0`
+(`a9592b7`, tagged `v0.43.0`). Between the two, Core added the document value space (its Phase 644, D260) with the
+law family `capabilityDocumentLaws`, and the query registry's decision context and grant (its Phase 651, D261) with
+the law family `queryGrantLaws`. No vector file of a family the crate certified at `c7d3013` moved.
+
+**D13.1 — went red first.** At the new pin, before the crate changed, the capability leg gained the document family
+on both profiles and every one of its 18 vectors failed: each declaration's hole space is `{"$type":"document",…}`,
+which the declaration reader refused as `UnknownTag` at `signature.holes[0].space.$type`. Behind that fault sat three
+the family needs: the pipeline seam's value-space table had no `document` row (three of the five type-check vectors
+declare a document output), no membership or canonical text for a document argument, and no document arm in the
+space relation. Every other family passed unchanged, hosted and embedded. `queryGrantLaws` had no leg to run red: the
+crate has no query declaration to read its registry with (D13.5). A new leg, `tests/families.rs`, enumerates every
+manifest under `conformance/` and fails on a family the crate neither answers nor names; it named `queryGrantLaws`,
+and also `identity` (D13.6), which the crate had not answered at `c7d3013` either.
+
+**D13.2 — the representation: a case of the value space, the type name carried and never read.** `ValueSpace` gains
+`Document(Option<String>)`, the twin of the reference's `Document of typeConstraint: string option`, written
+`{"$type":"document"}` with an optional `documentType`. The crate interprets the name nowhere: it is compared in the
+relation and spelled in the description, as a `SlotTree`'s kind is. Two alternatives lost. A document as `AnyString`
+is the reference's rejected (A) (D260.2): sound by membership, and it leaves a structured value untyped in the
+relation and in a pipeline's edges. Marking `ValueSpace` `#[non_exhaustive]`, so that the case does not break an
+exhaustive match, lost: the enum is the twin of a closed union of the reference, and a host that matches over it
+should be told at compile time that a space it does not handle now exists. So this is a source break for a consumer
+that matches exhaustively over `ValueSpace` (D13.9).
+
+**D13.3 — membership is the strict reader, and no `null`.** A string lies in a document space exactly when the
+strict reader (`json::parse`, the reader of D5 and D10, depth 512) reads it and the value it read holds no `null`:
+the twin of `Space.documentOf`, whose reader refuses `null` and whose guarded writer refuses a repeated member, an
+ill-formed string and a non-finite number. Those three are refused by the strict reader already (its rows 1, 6 and
+7: a repeated member, an unpaired surrogate, an exponent that overflows or an integer past 2^53 that is not its
+double's canonical layout), so what the crate adds is the `null` check, a walk over the value it read with an
+explicit stack. The bare `NaN`, `Infinity` and `-Infinity` are not JSON (row 4), so a document holds no non-finite
+number, as Core refuses it. The type name is never read, so every document space has the same members. An argument
+that is no document is `ArgOutOfSpace` carrying the space, never `UninvocableArg` (D260.3): a document could fill the
+hole, and the refusal's description says what would. Membership renders nothing: the canonical text is written only
+where it is handed on (D13.4). Two alternatives lost. Reading through the decode layer's null-free model
+(`decode::parse`), which refuses `null` at the reader as the reference does, then rendering that model: the crate has
+no non-recursive writer for it, and the one copy of it into `JVal` it has (`canonical_form`'s) recurses, which D10
+removed from every path an argument reaches. A second reader that decides membership without building the value, for
+D12.2's reason; it would also have to remember every member name it has seen to refuse a repeated one, an allocation
+of its own. What membership costs is measured in D13.8.
+
+**D13.4 — the canonical text is the crate's to produce, as the reference decided.** A document's one spelling is its
+cross-host canonical text (`render_canonical` of what was read: members sorted by UTF-16 code unit, no white space,
+the canonical number form, every control character as `\u00xx`), the twin of `Space.canonical` handing on
+`documentOf`'s text (D260.5: the space canonicalises). `ValueSpace::canonical` answers it, and the capture key and the
+identity write it for a binding in a document hole that lies in its space, so two spellings of one document are one
+key and one grant (`document-key-canonical` and `document-key-respelled` hold one key). Taking the text as given lost
+to the reference's own ruling and to those two vectors: an argument reaches the registry from callers that are not an
+encoder, in any member order. An argument outside its space is written as sent, as every other space's is (D12.3).
+
+**D13.5 — `queryGrantLaws` is not adopted, and the reason is the crate's scope, not the contract.** The family asks
+for the identity of a read (`Query.invocationPreimage`) and whether a grant covers it, over four query declarations
+it reads from their canonical text. The crate holds no query declaration, no query codec and no query registry. What
+it calls its query seam is the refusal codec for the query seam's documents (`QueryError`, `ColumnPredicate`,
+`SortKey`; D8, certified by `seamRefusals`), which reads and re-encodes those documents and holds no typed value.
+Adopting the family therefore means porting the query declaration (its `params`, `resultSchema`, `effect`, `source`,
+paging, and the `where` and `orderBy` members), the reader's admission gate (`QueryRegistry.admissionFaultAt`:
+unknown columns, predicate type mismatches, inapplicable predicates, ill-formed literals, repeated sort columns) and
+the identity, of which only the identity is what the 19 vectors check: every declaration they carry is one the gate
+admits. Two alternatives lost. Porting the declaration and its gate here would add a public surface the vectors
+certify at four admitted documents, its refusals certified by nothing, which is the partial answer under the
+reference's name D11.6 refused for the pipeline check; and D8's rule is that a typed value is not offered until a
+consumer needs one, and the crate's consumer, a device host, decides capabilities and makes no query reads. An
+identity function over a query's id, the canonical text of its filter and its order, and the bindings, with no
+declaration behind it, would answer the vectors and let a host mint a grant for a read the reference refuses to
+declare. So the family is named by `tests/families.rs` and stays `proposed` for this crate. The decision context and
+the grant the query registry gained have nothing in the crate to attach to; the capability registry's (D11) are
+unchanged. Should a consumer need reads, porting the query declaration, its admission gate and the read's identity is
+a phase of its own, certified then against this family and a refusal family for the declaration.
+
+**D13.6 — the fate of every other family Core added or moved since `c7d3013`.** `capabilityDocumentLaws`: adopted
+(D13.2 to D13.4). `capabilityLaws`, `capabilityGateLaws`, `seamRefusals`, `skeletonDag` and `skeletonMerge`: only
+Core's adoption records for the crate moved (to `55c145f`); the vectors did not, and every one passes as before.
+`conformance/idl/contracts.json` (`idlContracts`, Core Phase 644) is not answered: it certifies a reader of an IDL
+vocabulary's contracts, its refusals, its projection onto a capability and the differ's classes, and the crate reads
+no contract; its directory carries no manifest, so no adoption record could hold a count (D8's rule for the
+`encoding/` table at the time), and `tests/families.rs` does not see it. `idl/idl.schema.json` gained the contracts
+and is not read by the crate. `identity` (`identity/manifest.json`, Core Phase 578) was present at `c7d3013` already
+and was neither answered nor named then; it is named now: a declared record's identity under its IDL vocabulary, over
+a fixture vocabulary, which needs an IDL vocabulary reader the crate holds only in the slice the canonical-form family
+reads (`canonical_form`). Adopting it is not this phase's: it is not a family Core added or moved since the last pin,
+and it is reported so that it is no longer silent.
+
+**D13.7 — the description and the relation.** `describe` answers "a document: well-formed JSON" and "a document of
+type 't': well-formed JSON". In the relation the documents are a third family by the trees' rule: an unconstrained
+document space admits every document space, a constrained one only the same name, and no scalar or tree space admits
+a document or is admitted by one (`document-pipeline-output-*`). A pipeline's edge mismatch names the family
+`document`. The pipeline seam's value-space table gains the row `document` (`src/seam.rs`), so a node's declared
+output may be a document space; the seam's well-formedness rule already admits a space it has no bound rule for,
+which is the reference's rule for a document.
