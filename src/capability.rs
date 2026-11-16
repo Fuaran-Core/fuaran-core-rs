@@ -867,6 +867,35 @@ pub fn repeated_addrs<V>(args: &[(String, V)]) -> Vec<String> {
     dups
 }
 
+/// Run `each` over the bindings of `args` in address order (ordinal; equal
+/// addresses in list order, as the reference's stable `List.sortBy` keeps them),
+/// stopping at its first refusal. The order is found by selection, each pass
+/// taking the least binding after the one last taken, so it costs `O(n²)`
+/// comparisons of addresses and builds no vector (DECISIONS.md D12.3). The order
+/// both identities and the capability's capture key write their bindings in
+/// (D14.5).
+pub(crate) fn in_address_order<V>(
+    args: &[(String, V)],
+    mut each: impl FnMut(&str, &V) -> fmt::Result,
+) -> fmt::Result {
+    // The binding at `i` comes after the one at `j` in the pre-image's order.
+    let after = |i: usize, j: usize| match ordinal_cmp(&args[i].0, &args[j].0) {
+        Ordering::Greater => true,
+        Ordering::Equal => i > j,
+        Ordering::Less => false,
+    };
+    let mut last: Option<usize> = None;
+    while let Some(at) = (0..args.len())
+        .filter(|&i| last.is_none_or(|l| after(i, l)))
+        .reduce(|best, i| if after(best, i) { i } else { best })
+    {
+        let (addr, value) = &args[at];
+        each(addr, value)?;
+        last = Some(at);
+    }
+    Ok(())
+}
+
 // ─── The capture key and the invocation's identity ───────────────────────────
 
 impl Capability {
@@ -920,9 +949,8 @@ impl Capability {
     /// of `Capability.bindingFields`; the key hashes these fields and the
     /// identity keeps them.
     ///
-    /// Nothing is built but a document's text (DECISIONS.md D12, D13): the order is found by selection, each
-    /// pass taking the least binding after the one last written, so it costs
-    /// `O(n²)` comparisons of addresses and no vector; a number is spelled
+    /// Nothing is built but a document's text (DECISIONS.md D12, D13): the order is
+    /// found by selection ([`in_address_order`]), with no vector; a number is spelled
     /// through `core::fmt` into the field ([`Respelled`]); a document in a
     /// document hole is written as its canonical text ([`document_of`]), which
     /// reads and renders it, the one binding here that builds anything (D13);
@@ -934,18 +962,7 @@ impl Capability {
         args: &[(String, String)],
         out: &mut W,
     ) -> fmt::Result {
-        // The binding at `i` comes after the one at `j` in the pre-image's order.
-        let after = |i: usize, j: usize| match ordinal_cmp(&args[i].0, &args[j].0) {
-            Ordering::Greater => true,
-            Ordering::Equal => i > j,
-            Ordering::Less => false,
-        };
-        let mut last: Option<usize> = None;
-        while let Some(at) = (0..args.len())
-            .filter(|&i| last.is_none_or(|l| after(i, l)))
-            .reduce(|best, i| if after(best, i) { i } else { best })
-        {
-            let (addr, value) = &args[at];
+        in_address_order(args, |addr, value| {
             write_canonical_field(addr, out)?;
             let space = match self.hole(addr).map(|h| &h.kind) {
                 Some(HoleKind::Value(sp) | HoleKind::Repeat(sp)) => Some(sp),
@@ -962,10 +979,8 @@ impl Capability {
                 },
                 None => FieldBody(&mut *out).write_str(value)?,
             }
-            out.write_char(FOLD_SEP)?;
-            last = Some(at);
-        }
-        Ok(())
+            out.write_char(FOLD_SEP)
+        })
     }
 
     /// The effect-identity key a non-deterministic invocation is journalled and
@@ -1613,7 +1628,7 @@ impl Grant {
 /// The bytes of a grant not yet matched by the identity being written: each
 /// write must be their prefix, and a write that is not refuses, which stops the
 /// identity there.
-struct Unmatched<'a>(&'a [u8]);
+pub(crate) struct Unmatched<'a>(pub(crate) &'a [u8]);
 
 impl Write for Unmatched<'_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -1623,7 +1638,7 @@ impl Write for Unmatched<'_> {
 }
 
 /// The length in bytes of what is written through it; it keeps nothing.
-struct Measured(usize);
+pub(crate) struct Measured(pub(crate) usize);
 
 impl Write for Measured {
     fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -1635,24 +1650,26 @@ impl Write for Measured {
 /// A gate's decision function: the decision context, the resolved declaration
 /// and the validated arguments. Total and free of side effects (a registry is
 /// asked to decide without dispatching), so it is shareable across threads.
-type Decide<C> = dyn Fn(&C, &Capability, &[(String, String)]) -> PolicyDecision + Send + Sync;
+type Decide<C, D, A> = dyn Fn(&C, &D, &A) -> PolicyDecision + Send + Sync;
 
 /// One named gate over a registry's invocations: its name, carried by every
-/// refusal it makes, and its decision under a context `C`. The context is the
-/// host's type; the core names nothing it holds. The name is shared text, so a
-/// refusal carries it by a reference count and never a copy (DECISIONS.md D12).
-/// Twin of `PolicyGate`.
-pub struct PolicyGate<C> {
-    policy: Arc<str>,
-    decide: Arc<Decide<C>>,
+/// refusal it makes, and its decision under a context `C` over a declaration `D`
+/// and its arguments `A`. At its defaults it is the capability registry's gate;
+/// [`crate::query::QueryGate`] is the query registry's (DECISIONS.md D14.6). The
+/// context is the host's type; the core names nothing it holds. The name is
+/// shared text, so a refusal carries it by a reference count and never a copy
+/// (DECISIONS.md D12). Twin of `PolicyGate<'Ctx, 'Decl, 'Args>`.
+pub struct PolicyGate<C, D: ?Sized = Capability, A: ?Sized = [(String, String)]> {
+    pub(crate) policy: Arc<str>,
+    decide: Arc<Decide<C, D, A>>,
 }
 
-impl<C> PolicyGate<C> {
+impl<C, D: ?Sized, A: ?Sized> PolicyGate<C, D, A> {
     /// A gate named `policy` deciding with `decide`.
     pub fn new(
         policy: impl Into<Arc<str>>,
-        decide: impl Fn(&C, &Capability, &[(String, String)]) -> PolicyDecision + Send + Sync + 'static,
-    ) -> PolicyGate<C> {
+        decide: impl Fn(&C, &D, &A) -> PolicyDecision + Send + Sync + 'static,
+    ) -> PolicyGate<C, D, A> {
         PolicyGate {
             policy: policy.into(),
             decide: Arc::new(decide),
@@ -1663,12 +1680,9 @@ impl<C> PolicyGate<C> {
     /// under every context. Twin of `PolicyGate.ignoringContext`.
     pub fn ignoring_context(
         policy: impl Into<Arc<str>>,
-        decide: impl Fn(&Capability, &[(String, String)]) -> PolicyDecision + Send + Sync + 'static,
-    ) -> PolicyGate<C> {
-        PolicyGate::new(
-            policy,
-            move |_: &C, c: &Capability, a: &[(String, String)]| decide(c, a),
-        )
+        decide: impl Fn(&D, &A) -> PolicyDecision + Send + Sync + 'static,
+    ) -> PolicyGate<C, D, A> {
+        PolicyGate::new(policy, move |_: &C, d: &D, a: &A| decide(d, a))
     }
 
     /// The gate's name.
@@ -1677,12 +1691,27 @@ impl<C> PolicyGate<C> {
     }
 
     /// The gate's decision for one invocation under `ctx`.
-    pub fn decide(&self, ctx: &C, c: &Capability, args: &[(String, String)]) -> PolicyDecision {
-        (self.decide)(ctx, c, args)
+    pub fn decide(&self, ctx: &C, d: &D, args: &A) -> PolicyDecision {
+        (self.decide)(ctx, d, args)
+    }
+
+    /// The gate as the one context `ctx` sees it: its name, and its decision
+    /// under `ctx` whatever context it is asked under. What a registry's `under`
+    /// builds each gate into.
+    pub(crate) fn under(&self, ctx: &Arc<C>) -> PolicyGate<(), D, A>
+    where
+        C: Send + Sync + 'static,
+        D: 'static,
+        A: 'static,
+    {
+        let (ctx, decide) = (Arc::clone(ctx), Arc::clone(&self.decide));
+        PolicyGate::new(Arc::clone(&self.policy), move |_: &(), d: &D, a: &A| {
+            decide(&ctx, d, a)
+        })
     }
 }
 
-impl<C> Clone for PolicyGate<C> {
+impl<C, D: ?Sized, A: ?Sized> Clone for PolicyGate<C, D, A> {
     fn clone(&self) -> Self {
         PolicyGate {
             policy: Arc::clone(&self.policy),
@@ -1691,7 +1720,7 @@ impl<C> Clone for PolicyGate<C> {
     }
 }
 
-impl<C> core::fmt::Debug for PolicyGate<C> {
+impl<C, D: ?Sized, A: ?Sized> core::fmt::Debug for PolicyGate<C, D, A> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PolicyGate")
             .field("policy", &self.policy)
@@ -1701,10 +1730,39 @@ impl<C> core::fmt::Debug for PolicyGate<C> {
 
 /// Equal when both have the same name and the SAME decision function: a
 /// function has no extensional equality, so it is identity of the function.
-impl<C> PartialEq for PolicyGate<C> {
+impl<C, D: ?Sized, A: ?Sized> PartialEq for PolicyGate<C, D, A> {
     fn eq(&self, other: &Self) -> bool {
         self.policy == other.policy && Arc::ptr_eq(&self.decide, &other.decide)
     }
+}
+
+/// The ONE decision both registries' named read and every dispatch take
+/// (DECISIONS.md D14.6): the join over `gates` under `ctx`, in order, the
+/// deciding gate the FIRST of the most refusing rank (none when every gate
+/// allows), and a `NeedsApproval` lifted to `Allow` when `covered` answers that
+/// the presented grant is for exactly this invocation, the gate kept. `covered`
+/// is asked only when the gates ask for an approval, so an identity is written
+/// only then; it builds nothing here. Twin of `RegistryPolicy.decideGranted`.
+pub(crate) fn decide_granted<'g, C, D: ?Sized, A: ?Sized>(
+    gates: &'g [PolicyGate<C, D, A>],
+    ctx: &C,
+    decl: &D,
+    args: &A,
+    covered: impl FnOnce() -> bool,
+) -> (Option<&'g PolicyGate<C, D, A>>, PolicyDecision) {
+    let mut decider = None;
+    let mut decision = PolicyDecision::Allow;
+    for g in gates {
+        let d = g.decide(ctx, decl, args);
+        if d.rank() > decision.rank() {
+            decider = Some(g);
+            decision = d;
+        }
+    }
+    if decision == PolicyDecision::NeedsApproval {
+        decision = decision.lifted(covered());
+    }
+    (decider, decision)
 }
 
 // ─── The registry ────────────────────────────────────────────────────────────
@@ -1856,10 +1914,9 @@ impl<C> CapabilityRegistry<C> {
     }
 
     /// The ONE judgement the named read and every dispatch share: resolve,
-    /// validate, then the gates' join under `ctx` with the deciding gate (the
-    /// FIRST gate of the most refusing rank, none when every gate allows), a
-    /// `NeedsApproval` lifted to `Allow` when `grant` is for exactly this
-    /// invocation, the gate kept. Builds nothing on an admitted invocation: the
+    /// validate, then [`decide_granted`], the decision the query registry takes
+    /// too (DECISIONS.md D14.6), the grant read as covering when it is for
+    /// exactly this invocation. Builds nothing on an admitted invocation: the
     /// gate is borrowed and the grant is compared with the identity as it is
     /// written (DECISIONS.md D12). Twin of `KeyedRegistry.judge` over
     /// `RegistryPolicy.decideGranted`.
@@ -1871,20 +1928,9 @@ impl<C> CapabilityRegistry<C> {
         args: &[(String, String)],
     ) -> Result<(&Capability, Option<&PolicyGate<C>>, PolicyDecision), InvokeError> {
         let c = self.resolve(id, args)?;
-        let mut decider = None;
-        let mut decision = PolicyDecision::Allow;
-        for g in &self.gates {
-            let d = g.decide(ctx, c, args);
-            if d.rank() > decision.rank() {
-                decider = Some(g);
-                decision = d;
-            }
-        }
-        // The identity is compared only when a gate asks for an approval.
-        if decision == PolicyDecision::NeedsApproval {
-            let granted = grant.is_some_and(|g| g.covers_invocation(c, args));
-            decision = decision.lifted(granted);
-        }
+        let (decider, decision) = decide_granted(&self.gates, ctx, c, args, || {
+            grant.is_some_and(|g| g.covers_invocation(c, args))
+        });
         Ok((c, decider, decision))
     }
 
@@ -1952,20 +1998,9 @@ impl<C> CapabilityRegistry<C> {
         C: Send + Sync + 'static,
     {
         let ctx = Arc::new(ctx);
-        let gates = self
-            .gates
-            .iter()
-            .map(|g| {
-                let (ctx, decide) = (Arc::clone(&ctx), Arc::clone(&g.decide));
-                PolicyGate::new(
-                    Arc::clone(&g.policy),
-                    move |_: &(), c: &Capability, a: &[(String, String)]| decide(&ctx, c, a),
-                )
-            })
-            .collect();
         CapabilityRegistry {
             entries: self.entries.clone(),
-            gates,
+            gates: self.gates.iter().map(|g| g.under(&ctx)).collect(),
         }
     }
 }

@@ -18,6 +18,9 @@
 //!   document among them), the declaration and its declared result, the
 //!   registry's gates under a decision context, the grant bound to an
 //!   invocation's identity, and the pipeline type check;
+//!   [`query`] — the query declaration, its codec and admission gate, the
+//!   identity of a read and its grant, and the query registry, deciding reads
+//!   through the capability registry's own decision;
 //!   [`seam`] — the seams' refusal and declaration documents;
 //! - [`canonical_form`] — an IDL vocabulary's canonical form; [`profile`] — the
 //!   wire profile.
@@ -66,6 +69,7 @@ pub mod number;
 pub mod ops;
 pub mod profile;
 pub mod propagation;
+pub mod query;
 pub mod seam;
 pub mod sha256;
 pub mod tree;

@@ -779,6 +779,16 @@ impl ColumnType {
         self.read_json("", v).ok().map(|e| e.write_json(self))
     }
 
+    /// One cell written as a column of the type writes it: widened as the column
+    /// holds it, an absent cell as the type's absent slot, or the refusal of a
+    /// cell the column cannot hold. Twin of `ColumnCodec.writeCell`.
+    pub(crate) fn write_cell(self, name: &str, c: &Cell) -> Result<JVal, ColumnError> {
+        Ok(match self.of_cell(name, c)? {
+            Some(e) => e.write_json(self),
+            None => self.absent_slot(),
+        })
+    }
+
     /// The JSON value an absent row's slot carries — the reference row's `AbsentSlot`.
     fn absent_slot(self) -> JVal {
         match self {

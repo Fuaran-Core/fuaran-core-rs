@@ -591,11 +591,17 @@ type R<T> = Result<T, DecodeError>;
 /// document first, then the decode) followed by `encode<Name>`. Answers the
 /// re-encoding of what it read, or the refusal at its path.
 pub fn read(root: &Slot, doc: &Value, reading: &Reading) -> R<JVal> {
-    let at = Cursor::root(doc);
+    read_at(root, &Cursor::root(doc), reading)
+}
+
+/// [`read`] of the value at `at`, a refusal's path below `at`'s: how a typed
+/// reader reads a seam document it holds as a member (the query declaration's
+/// `where` and `orderBy`, DECISIONS.md D14.3).
+pub(crate) fn read_at(root: &Slot, at: &Cursor<'_>, reading: &Reading) -> R<JVal> {
     if reading.strict {
-        strict(root, &at)?;
+        strict(root, at)?;
     }
-    decode(root, &at, reading)
+    decode(root, at, reading)
 }
 
 /// Read JSON text at `root` and answer the re-encoding's canonical bytes. The text
@@ -815,9 +821,7 @@ fn decode_hosted(h: Hosted, at: &Cursor<'_>, reading: &Reading) -> R<JVal> {
                 )),
             }
         }
-        Hosted::ColumnType => Ok(JVal::Str(
-            one_of(at, &ColumnType::TAGS, "value")?.to_string(),
-        )),
+        Hosted::ColumnType => Ok(JVal::Str(column_type_of(at)?.tag().to_string())),
         Hosted::PredicateTag => Ok(JVal::Str(one_of(at, PREDICATE_TAGS, "value")?.to_string())),
         Hosted::DecodeError => decode_error_form(at),
         Hosted::Unit => {
@@ -942,6 +946,16 @@ pub const PREDICATE_TAGS: &[&str] = &[
     "isNotNull",
 ];
 
+/// A column type by its tag (twin of `QueryWire.columnTypeOf`): a non-string is
+/// `WrongKind`, a tag outside the scalar set `UnknownTag`, at the value.
+pub(crate) fn column_type_of(at: &Cursor<'_>) -> R<ColumnType> {
+    let tag = one_of(at, &ColumnType::TAGS, "value")?;
+    match ColumnType::of_tag(tag) {
+        Some(ty) => Ok(ty),
+        None => Err(fail(at, DecodeCode::SchemaFault, "a column type", tag)),
+    }
+}
+
 /// Twin of `QueryWire.comparedOf` then `comparedMembers`: `column`, then `type`,
 /// then `value` read as one present cell of that type; a value the type cannot carry
 /// is `OutOfRange` at `value`. The re-encoding names the type the CELL carries (an
@@ -949,7 +963,7 @@ pub const PREDICATE_TAGS: &[&str] = &[
 /// writes it.
 fn compared_of(at: &Cursor<'_>) -> R<Vec<(String, JVal)>> {
     let column = at.field("column")?.string()?.to_string();
-    let ty = one_of(&at.field("type")?, &ColumnType::TAGS, "value")?;
+    let ty = column_type_of(&at.field("type")?)?.tag();
     let value_at = at.field("value")?;
     let Some((cell_ty, written)) = read_literal(ty, value_at.value()) else {
         return Err(fail(
