@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 # fuaran-core-rs: the one-command entry point.
-# cargo fmt --check -> cargo clippy -> cargo build -> cargo test (and the premise probes in release, and the capability
+# cargo fmt --check -> cargo clippy -> cargo build -> cargo test (and the premise probes in release, and the capability and query
 # legs again without `std`, the embedded build's features) -> a no_std build for thumbv7em-none-eabihf (Cortex-M4F) ->
 # (opt-in) the machine-checked proofs under verification/.
 #
@@ -89,10 +89,11 @@ if (-not $SkipTests) {
     Invoke-Stage "cargo test" { & $cargo test --all-features }
     # The depth premise is claimed for both profiles (DECISIONS.md D10): the reader's frames differ between them.
     Invoke-Stage "cargo test --release (premises)" { & $cargo test --release --all-features --test premises }
-    # The capability law, document and gate vectors are claimed for both profiles (DECISIONS.md D11, D13): run again on the library
-    # built as the embedded build builds it (no `std`), with the leg that holds the decision path at zero allocations
-    # once the registry is built (D12). They run on this host; the target build below only builds.
-    Invoke-Stage "cargo test --no-default-features (capability legs)" { & $cargo test --no-default-features --test capability --test capability_gate --test capability_alloc --test query_grant }
+    # The capability law, document and gate vectors and the query grant vectors are claimed for both profiles
+    # (DECISIONS.md D11, D13, D14): run again on the library built as the embedded build builds it (no `std`), with the
+    # query module's own tests and the leg that holds the decision path, a capability's and a read's, at zero
+    # allocations once the registry is built (D12, D14). They run on this host; the target build below only builds.
+    Invoke-Stage "cargo test --no-default-features (capability and query legs)" { & $cargo test --no-default-features --test capability --test capability_gate --test capability_alloc --test query_grant --test query }
 }
 
 if (-not $SkipEmbedded) {

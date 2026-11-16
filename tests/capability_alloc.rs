@@ -1,6 +1,7 @@
 //! The capability decision path allocates nothing once the registry is built
 //! (DECISIONS.md D12): every row of the table D11.7 measured, asserted at zero,
-//! with a counting global allocator around exactly the call under test.
+//! with a counting global allocator around exactly the call under test; and a
+//! read's, decided by the same function at the query registry (D14).
 //!
 //! A global allocator is process-wide, so this leg is its own test binary and
 //! counts on the measuring thread only: the harness's own threads allocate
@@ -22,6 +23,8 @@ use std::sync::Arc;
 use fuaran_core::capability::{
     Capability, CapabilityRegistry, InvokeError, PolicyDecision, PolicyGate,
 };
+use fuaran_core::column::Cell as QCell;
+use fuaran_core::query::{Query, QueryError, QueryRegistry};
 
 // ─── The counting allocator ──────────────────────────────────────────────────
 
@@ -406,4 +409,148 @@ fn a_document_argument_allocates_to_read_its_document() {
     for ((what, (a, _)), line) in rows.iter().zip(&report) {
         assert!(*a > 0, "{what} reads its document, so it allocates: {line}");
     }
+}
+
+// ─── A read (DECISIONS.md D14) ───────────────────────────────────────────────
+
+/// Two of `queryGrantLaws`' queries: `ledger`, which declares no filter and no
+/// order, and `shaped`, which declares both.
+const LEDGER: &str = r#"{"$type":"query","effect":{"determinism":"network","host":"readsHost"},"id":"ledger","pageSize":50,"params":[{"name":"n","required":true,"type":"int"}],"resultSchema":[{"name":"n","type":"int"},{"name":"region","type":"string"}],"source":{"ref":"ledger","schema":[]}}"#;
+const SHAPED: &str = r#"{"$type":"query","effect":{"determinism":"network","host":"readsHost"},"id":"shaped","orderBy":[{"column":"n","direction":"descending"}],"pageSize":50,"params":[{"name":"n","required":true,"type":"int"}],"resultSchema":[{"name":"n","type":"int"},{"name":"region","type":"string"}],"source":{"ref":"shaped","schema":[]},"where":[{"$type":"contains","column":"region","text":"eu"},{"$type":"atLeast","column":"n","type":"int","value":2}]}"#;
+
+/// A query registry over a `u8` context: every read is open to the trusted
+/// context; in the untrusted one `ledger` and `shaped` need an approval.
+fn query_registry() -> QueryRegistry<u8> {
+    [LEDGER, SHAPED]
+        .iter()
+        .fold(QueryRegistry::empty(), |r, text| {
+            r.register(Query::decode(text).expect("a declaration"))
+                .expect("admitted")
+        })
+        .with_gate(PolicyGate::new(
+            "reads",
+            |ctx: &u8, _: &Query, _: &[(String, QCell)]| match *ctx {
+                TRUSTED => PolicyDecision::Allow,
+                _ => PolicyDecision::NeedsApproval,
+            },
+        ))
+}
+
+/// A read is decided through the capability registry's own decision (D14.6),
+/// so the claim D12 makes for a capability holds for a read: once the registry
+/// is built, deciding and dispatching allocate nothing, for a read whose
+/// declaration filters and orders as for one that does not, because the
+/// registry rendered that text when it registered the query. Asserted at zero.
+/// Two rows outside the registry are REPORTED: the identity and a grant's
+/// coverage of a filtered read asked of the declaration alone render its filter
+/// and order text, which is what allocates there.
+#[test]
+fn a_reads_decision_allocates_nothing_once_the_registry_is_built() {
+    let r = query_registry();
+    let ledger = r.try_find("ledger").expect("ledger").clone();
+    let shaped = r.try_find("shaped").expect("shaped").clone();
+    let args = vec![("n".to_string(), QCell::Int(5))];
+    let own_ledger = ledger.grant(&args);
+    let own_shaped = shaped.grant(&args);
+    let other = ledger.grant(&[("n".to_string(), QCell::Int(6))]);
+
+    let (known, v) = measure(|| Vec::<u8>::with_capacity(16));
+    drop(v);
+    assert_eq!(known, (1, 16), "the counting allocator counts");
+
+    let mut table: Vec<(&str, (usize, usize))> = Vec::new();
+
+    let (n, d) = measure(|| ledger.validate_params(&args));
+    assert_eq!(d, Ok(()));
+    table.push(("read: validate_params, one binding", n));
+
+    let (n, d) = measure(|| r.decide_named(&TRUSTED, None, "ledger", &args));
+    assert_eq!(d, Ok(("", PolicyDecision::Allow)));
+    table.push(("read: decide_named, allowed", n));
+
+    let (n, d) = measure(|| r.decide_named(&UNTRUSTED, None, "ledger", &args));
+    assert_eq!(d, Ok(("reads", PolicyDecision::NeedsApproval)));
+    table.push(("read: decide_named, needs approval, no grant", n));
+
+    let (n, d) = measure(|| r.decide_named(&UNTRUSTED, Some(&own_ledger), "ledger", &args));
+    assert_eq!(d, Ok(("reads", PolicyDecision::Allow)));
+    table.push(("read: decide_named, its own grant", n));
+
+    let (n, d) = measure(|| r.decide_named(&UNTRUSTED, Some(&own_shaped), "shaped", &args));
+    assert_eq!(d, Ok(("reads", PolicyDecision::Allow)));
+    table.push(("read: decide_named, its own grant, filtered and ordered", n));
+
+    let (n, d) = measure(|| r.decide_named(&UNTRUSTED, Some(&other), "ledger", &args));
+    assert_eq!(d, Ok(("reads", PolicyDecision::NeedsApproval)));
+    table.push(("read: decide_named, another read's grant", n));
+
+    let (n, d) = measure(|| r.dispatch(&UNTRUSTED, Some(&own_shaped), "shaped", &args, |_| Ok(())));
+    assert_eq!(d, Ok(()));
+    table.push(("read: dispatch, granted, filtered and ordered", n));
+
+    let (n, d) = measure(|| r.dispatch(&UNTRUSTED, None, "ledger", &args, |_| Ok(())));
+    assert!(matches!(d, Err(QueryError::QueryApprovalRequired { .. })));
+    drop(d);
+    table.push(("read: dispatch, parked (approval required)", n));
+
+    let (n, d) = measure(|| {
+        let mut buf = StackText::<64>::new();
+        ledger
+            .write_invocation_identity(&args, &mut buf)
+            .map(|()| buf)
+    });
+    assert_eq!(
+        d.expect("fits").as_bytes(),
+        own_ledger.invocation().as_bytes()
+    );
+    table.push(("read: identity written to a stack buffer, no filter", n));
+
+    let (n, d) = measure(|| own_ledger.covers_read(&ledger, &args));
+    assert!(d);
+    table.push(("read: Grant::covers_read, no filter", n));
+
+    let report: Vec<String> = table
+        .iter()
+        .map(|(what, (a, b))| format!("{what:<62} allocations {a:>3}  bytes {b:>5}"))
+        .collect();
+    println!("{}", report.join("\n"));
+
+    // Outside the registry, a filtered read's text is rendered where it is asked.
+    let (n, d) = measure(|| own_shaped.covers_read(&shaped, &args));
+    assert!(d);
+    println!(
+        "{:<62} allocations {:>3}  bytes {:>5}  (reported: renders the filter and order)",
+        "read: Grant::covers_read, filtered and ordered", n.0, n.1
+    );
+    assert!(n.0 > 0, "the filter and order text is rendered");
+    let (n, d) = measure(|| {
+        let mut buf = StackText::<256>::new();
+        shaped
+            .write_invocation_identity(&args, &mut buf)
+            .map(|()| buf)
+    });
+    assert_eq!(
+        d.expect("fits").as_bytes(),
+        own_shaped.invocation().as_bytes()
+    );
+    println!(
+        "{:<62} allocations {:>3}  bytes {:>5}  (reported: renders the filter and order)",
+        "read: identity to a stack buffer, filtered and ordered", n.0, n.1
+    );
+
+    let nonzero: Vec<&String> = table
+        .iter()
+        .zip(&report)
+        .filter(|((_, (a, _)), _)| *a != 0)
+        .map(|(_, line)| line)
+        .collect();
+    assert!(
+        nonzero.is_empty(),
+        "rows that allocate:\n{}",
+        nonzero
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }
