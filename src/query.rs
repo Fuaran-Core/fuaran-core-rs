@@ -866,7 +866,7 @@ impl Query {
 /// The canonical text of a declaration's filter and order, each `None` when it
 /// declares none: what the identity writes after the id (D14.5). Rendered once
 /// per identity here, and once per query by a registry that holds it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 struct Shape {
     filter: Option<String>,
     order: Option<String>,
