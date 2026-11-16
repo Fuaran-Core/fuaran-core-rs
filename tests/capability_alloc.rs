@@ -302,3 +302,110 @@ fn the_decision_path_allocates_nothing_once_the_registry_is_built() {
             .join("\n")
     );
 }
+
+// ─── A document argument (DECISIONS.md D13) ──────────────────────────────────
+
+/// The document family's capability: one required hole `d0` in the document
+/// space of type `Order`, answering a `Receipt`.
+const DOCUMENT: &str = r#"{"$type":"capability","determinism":"clock","id":"cap-document","placement":{"$type":"server"},"result":{"$type":"document","documentType":"Receipt"},"signature":{"effect":{"determinism":"clock","host":"readsHost"},"holes":[{"addr":"d0","kind":"value","name":"order","required":true,"space":{"$type":"document","documentType":"Order"}}],"name":"capDocument"}}"#;
+
+/// A registry holding the document capability beside `read`, under a gate that
+/// parks the document for approval in the untrusted context.
+fn document_registry() -> CapabilityRegistry<u8> {
+    [DOCUMENT, READ]
+        .iter()
+        .fold(CapabilityRegistry::empty(), |r, text| {
+            r.register(Capability::decode(text).expect("a declaration"))
+                .expect("admitted")
+        })
+        .with_gate(PolicyGate::new(
+            "review",
+            |ctx: &u8, c: &Capability, _: &[(String, String)]| match (*ctx, c.id.as_str()) {
+                (UNTRUSTED, "cap-document") => PolicyDecision::NeedsApproval,
+                _ => PolicyDecision::Allow,
+            },
+        ))
+}
+
+/// A document argument is read to decide its membership, and read and written
+/// to spell it in the identity: what forces those allocations is the strict
+/// reader (the value it builds, its nesting stack and the member names it
+/// remembers to refuse a repeated one), the `null` walk's stack, and the
+/// canonical text. So the rows are REPORTED, each shown to allocate, and a
+/// decision on a registry that holds a document capability still allocates
+/// nothing for a capability with no document hole.
+#[test]
+fn a_document_argument_allocates_to_read_its_document() {
+    let r = document_registry();
+    let doc = r.try_find("cap-document").expect("cap-document").clone();
+    let canonical = bindings(&[("d0", r#"{"a":1,"b":[true,"x\u000ay",2.5]}"#)]);
+    let respelled = bindings(&[(
+        "d0",
+        r#"{ "b" : [ true, "x\ny", 2.50 ],
+  "a" : 1 }"#,
+    )]);
+    let not_a_document = bindings(&[("d0", "order")]);
+    let r_args = bindings(&[("n", "3")]);
+    let own = doc.grant(&canonical);
+
+    // The calibration row, as in the table above.
+    let (known, v) = measure(|| Vec::<u8>::with_capacity(16));
+    drop(v);
+    assert_eq!(known, (1, 16), "the counting allocator counts");
+
+    // No document hole: nothing, though the registry holds a document capability.
+    let (n, d) = measure(|| r.decide_named(&TRUSTED, None, "read", &r_args));
+    assert_eq!(d, Ok(("", PolicyDecision::Allow)));
+    assert_eq!(n, (0, 0), "a decision with no document argument");
+
+    let mut rows: Vec<(&str, (usize, usize))> = Vec::new();
+
+    let (n, d) = measure(|| doc.validate_args(&canonical));
+    assert_eq!(d, Ok(()));
+    rows.push(("validate_args, one document (canonical spelling)", n));
+
+    let (n, d) = measure(|| doc.validate_args(&respelled));
+    assert_eq!(d, Ok(()));
+    rows.push(("validate_args, one document (another spelling)", n));
+
+    let (n, d) = measure(|| r.decide_named(&TRUSTED, None, "cap-document", &canonical));
+    assert_eq!(d, Ok(("", PolicyDecision::Allow)));
+    rows.push(("decide_named, allowed, one document", n));
+
+    let (n, d) = measure(|| r.decide_named(&UNTRUSTED, Some(&own), "cap-document", &respelled));
+    assert_eq!(d, Ok(("review", PolicyDecision::Allow)));
+    rows.push(("decide_named, its own grant, the document respelled", n));
+
+    let (n, d) = measure(|| r.dispatch(&TRUSTED, None, "cap-document", &canonical, |_| Ok(())));
+    assert_eq!(d, Ok(()));
+    rows.push(("dispatch, allowed, one document", n));
+
+    let (n, d) = measure(|| own.covers_invocation(&doc, &respelled));
+    assert!(d);
+    rows.push(("Grant::covers_invocation, the document respelled", n));
+
+    let (n, d) = measure(|| {
+        let mut buf = StackText::<96>::new();
+        doc.write_invocation_identity(&respelled, &mut buf)
+            .map(|()| buf)
+    });
+    assert_eq!(d.expect("fits").as_bytes(), own.invocation().as_bytes());
+    rows.push((
+        "invocation identity written to a stack buffer, one document",
+        n,
+    ));
+
+    let (n, d) = measure(|| doc.validate_args(&not_a_document));
+    assert!(matches!(d, Err(InvokeError::ArgOutOfSpace { .. })));
+    drop(d);
+    rows.push(("validate_args, refused: no document", n));
+
+    let report: Vec<String> = rows
+        .iter()
+        .map(|(what, (a, b))| format!("{what:<62} allocations {a:>3}  bytes {b:>5}"))
+        .collect();
+    println!("{}", report.join("\n"));
+    for ((what, (a, _)), line) in rows.iter().zip(&report) {
+        assert!(*a > 0, "{what} reads its document, so it allocates: {line}");
+    }
+}
