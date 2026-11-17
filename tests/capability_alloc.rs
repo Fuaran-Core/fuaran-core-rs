@@ -10,9 +10,11 @@
 //! disarmed before the call's answer is dropped. The first row is a known
 //! allocation, so the count is shown to count before any row is read as zero.
 //!
-//! `run.ps1` runs it on the embedded profile (the library built without `std`)
-//! and `cargo test --all-features` on the hosted one; it runs on the build host,
-//! because no emulator is in the gate.
+//! `run.ps1` runs it on the hosted profile (in `cargo test --all-features`) and
+//! on the embedded one (the library built without `std`), in debug and in
+//! release, printing every row, and again at the minimum Rust version the
+//! manifest declares (DECISIONS.md D15); it runs on the build host, because no
+//! emulator is in the gate.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

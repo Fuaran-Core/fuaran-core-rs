@@ -10,10 +10,11 @@
 # spine certifies against the vectors of one Core commit, and moving to another is a deliberate
 # change here (core-pin.json), never something a push to Core does to this build.
 #
-# The whole gate is run.ps1, so CI and the one-command entry point cannot diverge.
-#
-# The gate runs twice: at stable, and at the minimum Rust version Cargo.toml declares
-# (`rust-version`), read from the manifest so the two cannot drift apart.
+# The whole gate is run.ps1, so CI and the one-command entry point cannot diverge. It runs in two
+# jobs (DECISIONS.md D15): at stable, with the format check and the lints, and at the minimum Rust
+# version Cargo.toml declares (`rust-version`, read from the manifest, so the workflow names no
+# version of its own), where run.ps1 -MinimumOnly fails unless that toolchain and its embedded
+# target are installed, so a green minimum job is one whose legs ran.
 
 name: CI
 
@@ -33,7 +34,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, minimum]
+        include:
+          - toolchain: stable
+            components: --component rustfmt --component clippy
+            gate: -SkipMinimum
+          - toolchain: minimum
+            components: ""
+            gate: -MinimumOnly
     defaults:
       run:
         working-directory: fuaran-core-rs
@@ -58,7 +65,6 @@ jobs:
       - name: Assert Core is where the tests resolve it
         run: test -f ../fuaran-core/conformance/apply/manifest.json
 
-      # The minimum is the manifest's `rust-version`, read here so the workflow names no version of its own.
       - name: Resolve the toolchain
         id: toolchain
         run: |
@@ -75,29 +81,11 @@ jobs:
       # through a third-party action referenced by a moving branch name.
       - name: Set up Rust
         run: |
-          rustup toolchain install ${{ steps.toolchain.outputs.name }} --profile minimal --component rustfmt --component clippy
+          rustup toolchain install ${{ steps.toolchain.outputs.name }} --profile minimal ${{ matrix.components }}
           rustup default ${{ steps.toolchain.outputs.name }}
           rustup target add thumbv7em-none-eabihf --toolchain ${{ steps.toolchain.outputs.name }}
           rustc --version && cargo --version
 
-      - name: Gate (run.ps1)
+      - name: Gate (run.ps1 ${{ matrix.gate }})
         shell: pwsh
-        run: ./run.ps1
-
-      # Measurement (Phase 681): the legs after the lints, run whatever the lints answered.
-      - name: Build, tests, legs without std and the embedded build, past the lints
-        if: always()
-        shell: pwsh
-        run: |
-          rustc --version
-          cargo build --all-features
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./run.ps1 -SkipFormat -SkipBuild
-
-      # Measurement (Phase 681): the allocation table in release, on both profiles.
-      - name: Allocation table in release (hosted, then without std)
-        if: always()
-        run: |
-          rustc --version
-          cargo test --release --all-features --test capability_alloc
-          cargo test --release --no-default-features --test capability_alloc
+        run: ./run.ps1 ${{ matrix.gate }}
