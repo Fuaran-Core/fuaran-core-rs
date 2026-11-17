@@ -84,6 +84,16 @@ jobs:
         shell: pwsh
         run: ./run.ps1
 
+      # Measurement (Phase 681): the legs after the lints, run whatever the lints answered.
+      - name: Build, tests, legs without std and the embedded build, past the lints
+        if: always()
+        shell: pwsh
+        run: |
+          rustc --version
+          cargo build --all-features
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./run.ps1 -SkipFormat -SkipBuild
+
       # Measurement (Phase 681): the allocation table in release, on both profiles.
       - name: Allocation table in release (hosted, then without std)
         if: always()
