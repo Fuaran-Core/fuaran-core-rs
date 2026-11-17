@@ -1099,3 +1099,17 @@ the test built; and the few codes, paths and values no vector reaches (D17.10). 
   `unregister` and the resolver's own refusal no vector reaches; its `RequiredParamsUnbound` before the gate and its
   `NoSuchQuery` sentence overlap `dispatch-validated-before-the-gate` and `dispatch-unregistered` only in kind (another
   registry, another context type, a sentence), so it stays whole as the port's test of the registry's verbs.
+
+**D17.11 — the leg was shown red once, on the clause it pins.** One commit (`0ab3526`) altered one clause of the
+admission gate in `src/query.rs`: a sort key was refused when a LATER key named its column, rather than an earlier one,
+so `DuplicateSortColumn` was raised at the first naming (`orderBy.0`) instead of the second. In CI (run 44101270496, at
+`rustc 1.85.0 (4d91de4e4 2025-02-17)` and at `rustc 1.100.0 (0ef1bc386 2026-11-09)`) and locally, the leg failed with
+`2 of 84 vectors answered differently`, naming exactly the two vectors that pin the clause:
+`declaration-gate-an-order-naming-a-column-twice` (answered `path ["orderBy","0"]`, expected `["orderBy","2"]`) and
+`admission-an-order-naming-a-column-twice` (answered `at ["orderBy","0"]`, expected `["orderBy","2"]`, the same
+`duplicateSortColumn` document). `tests/query.rs` stayed green (19 passed): after D17.9 the position is pinned by the
+family alone, and the port's sentence for the refusal does not carry it. The clause was chosen for that reason: a
+clause whose sentence changes would red `tests/query.rs` first, and `cargo test` stops at the first failing binary, so
+the run would not have reached the leg. The next commit (`2ff369f`) restored the line, leaving `src/query.rs` byte for
+byte as it is on `main`, and the leg is green again (run 44101527779, both jobs, 84 of 84). Neither commit is the head
+that lands.

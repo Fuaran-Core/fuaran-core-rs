@@ -3,6 +3,24 @@
 Every change to the crate's public API, newest first. Each entry names the Core commit the crate certifies against
 (`core-pin.json`), and whether that Core version is released.
 
+## 0.0.5-alpha.1, unchanged — 2026-11-17 — the query declaration's refusals certified, at Core `bd1a339f` (draft)
+
+Follows Core `bd1a339f17302ab1cd6d6db732ff596fd4eaaaac`, version `0.43.1`, a **draft**, not released (a commit on Core's
+`main` inside its open `0.43.1` slot; no tag names it). Previous pin `a9592b7` (`0.43.0`, released). No change to the
+public API or to any answer; the version stays `0.0.5-alpha.1` (D11.8: no public item changed). DECISIONS.md D17.
+
+**Certified:** `queryDeclarationLaws` (Core Phase 680, the reference's D263), all 84 vectors, hosted and without `std`:
+the declaration reader's refusals on code and path (`declarationRefused`, 36); the admission gate over a declaration
+stated as data (`admissionFault`, 21); registration (`register`, 4); argument validation (`validateParams`, 14); the
+registry's gated dispatch under the file's gate table, with and without a grant (`dispatch`, 9). Every refusal outside
+the reader is compared as its query-error document, read through the seam codec; no sentence is compared. Every family
+the crate answered at the previous pin reads the same at the new one but for the kit's version stamp, with the same
+counts.
+
+**Tests:** `tests/query.rs` no longer pins a code, a path or an error value that a vector now pins (D17.9 tables each
+group against its vectors); it keeps each refusal's sentence and the few codes and values no vector reaches (D17.10).
+The readers of a cell, a read's arguments and a gate rule's decision are shared from `tests/common`.
+
 ## 0.0.5-alpha.1, unchanged — 2026-11-17 — the gate at exactly the declared minimum, 1.85.0
 
 No change to the public API, to any answer, or to what the crate certifies against (Core `a9592b7`, `0.43.0`,

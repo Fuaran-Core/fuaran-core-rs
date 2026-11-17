@@ -37,8 +37,8 @@ when no checkout is found. Which families are run, with each leg's count, is
 [DECISIONS.md](DECISIONS.md) D8 (D6 recorded the first certification); the counts themselves are the spine's
 adoption record in each of the reference's family manifests.
 
-The pin is Core `a9592b7` (`0.43.0`, **released**: the commit tagged `v0.43.0`), CHANGELOG.md and DECISIONS.md D13
-and D14. At that commit the crate answers every family with a manifest but two, which `tests/families.rs` names with
+The pin is Core `bd1a339f` (`0.43.1`, a **draft**, not released: a commit on Core's `main` inside its open `0.43.1`
+slot, which no tag names), CHANGELOG.md and DECISIONS.md D13, D14 and D17. At that commit the crate answers every family with a manifest but two, which `tests/families.rs` names with
 the reason: `encodingProfile` (declined, D8) and `identity` (not adopted, D14.7: its vocabulary is a test fixture of the
 reference rather than conformance data, two of its lines need the `v1` rendering D8 declined, and the crate holds no IDL
 vocabulary reader beyond the canonical-form slice). The capability and query families among those it answers:
@@ -46,11 +46,14 @@ vocabulary reader beyond the canonical-form slice). The capability and query fam
 the declaration refusals, enumeration, the pipeline type check), `capabilityDocumentLaws`, all 18 (the document value
 space through validation, the key, the round trip and the type check), `capabilityGateLaws`, all 41 (the invocation's
 identity, grant coverage, the named decision and dispatch, each decided under the file's context labels and again under
-an integer context), and `queryGrantLaws`, all 19 (the identity of a read and whether a grant covers it, over four
-declarations read through the crate's declaration reader, each coverage also decided by the query registry). These four
-families run on the standard profile and again on the embedded one, the library built without `std`; the embedded run
-executes on the build host, and the `thumbv7em-none-eabihf` build is a build. Core emits no vector for the query
-declaration reader's or its admission gate's refusals: `tests/query.rs` pins each to the reference's text at the pin.
+an integer context), `queryGrantLaws`, all 19 (the identity of a read and whether a grant covers it, over four
+declarations read through the crate's declaration reader, each coverage also decided by the query registry), and
+`queryDeclarationLaws`, all 84, answered at Core `bd1a339f` (the declaration reader's refusals on code and path; the
+admission gate, registration, argument validation and the registry's gated dispatch on the verdict and the query-error
+document, read through the seam codec and never compared as a sentence; D17). These five families run on the standard
+profile and again on the embedded one, the library built without `std`; the embedded run executes on the build host,
+and the `thumbv7em-none-eabihf` build is a build. `tests/query.rs` keeps what no vector pins: each refusal's sentence,
+and the few codes and values no vector reaches (D17.9, D17.10).
 
 On the embedded profile the decision path allocates nothing once the registry is built, for a capability and for a
 read: `decide_named` and `dispatch` (allowed, needing approval, granted, parked or denied), the identity written into a
@@ -60,7 +63,8 @@ reading a tree argument, the owned argument pairs a caller presents, and a filte
 declaration alone rather than of the registry that rendered its filter). One function decides at both registries
 (D14.6). A document argument is read to decide its membership and to spell it, so it allocates in proportion to the
 document; the same leg measures and reports it (D13.8). The crate requires `alloc` on every profile. This statement
-certifies against Core `a9592b7` (`0.43.0`, released); the crate's version is `0.0.5-alpha.1` (CHANGELOG.md).
+certifies against Core `bd1a339f` (`0.43.1`, draft, not released); the crate's version is `0.0.5-alpha.1`
+(CHANGELOG.md).
 
 These claims are checked at two Rust versions: exactly 1.85.0, the minimum `Cargo.toml` declares
 (`rust-version = "1.85"`, a missing patch component read as `.0`), and stable, each by its own CI job. The minimum job
