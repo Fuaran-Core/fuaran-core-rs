@@ -80,8 +80,6 @@ jobs:
               *.*) v="$v.0" ;;
               *) echo "Cargo.toml's rust-version '$v' is not major.minor or major.minor.patch"; exit 1 ;;
             esac
-            # Phase 682, the red demonstration: the job is pointed at another patch; the next commit removes this.
-            v=1.85.1
           else
             v=stable
           fi
@@ -96,12 +94,6 @@ jobs:
           rustup default ${{ steps.toolchain.outputs.name }}
           rustup target add thumbv7em-none-eabihf --toolchain ${{ steps.toolchain.outputs.name }}
           rustc --version && cargo --version
-
-      # Phase 682, the red demonstration: the later-patch case outside -MinimumOnly; the next commit removes this.
-      - name: Probe (run.ps1 without -MinimumOnly, holding another patch only)
-        if: matrix.toolchain == 'minimum'
-        shell: pwsh
-        run: ./run.ps1 -SkipFormat -SkipBuild -SkipEmbedded
 
       - name: Gate (run.ps1 ${{ matrix.gate }})
         shell: pwsh
