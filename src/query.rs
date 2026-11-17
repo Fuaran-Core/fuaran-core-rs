@@ -649,7 +649,7 @@ impl Query {
                     name: k.column.clone(),
                     declared: columns_of(&self.result_schema),
                 })
-            } else if self.order_by[..i].iter().any(|x| x.column == k.column) {
+            } else if self.order_by[i + 1..].iter().any(|x| x.column == k.column) {
                 Some(QueryError::DuplicateSortColumn {
                     column: k.column.clone(),
                 })
