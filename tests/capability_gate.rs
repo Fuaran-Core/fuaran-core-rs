@@ -55,22 +55,6 @@ fn grant_of(input: &JVal) -> Option<Grant> {
     })
 }
 
-/// A decision as the table and the vectors write it.
-fn decision_of(v: &JVal) -> PolicyDecision {
-    match s(v, "decision") {
-        "allow" => PolicyDecision::Allow,
-        "needsApproval" => PolicyDecision::NeedsApproval,
-        "deny" => PolicyDecision::deny_with(
-            s(v, "message"),
-            str_items(v, "alternatives")
-                .iter()
-                .map(|a| Arc::from(a.as_str()))
-                .collect::<Vec<Arc<str>>>(),
-        ),
-        other => panic!("unknown decision {other}"),
-    }
-}
-
 fn decision_members(d: PolicyDecision) -> Vec<(String, JVal)> {
     match d {
         PolicyDecision::Allow => vec![("decision".into(), JVal::Str("allow".into()))],

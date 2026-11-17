@@ -111,10 +111,11 @@ function Invoke-Legs {
         Invoke-Stage "cargo test$Label" { & $cargo @On test --all-features }
         # The depth premise is claimed for both profiles (DECISIONS.md D10): the reader's frames differ between them.
         Invoke-Stage "cargo test --release (premises)$Label" { & $cargo @On test --release --all-features --test premises }
-        # The capability law, document and gate vectors and the query grant vectors are claimed for both profiles
-        # (DECISIONS.md D11, D13, D14): run again on the library built as the embedded build builds it (no `std`), with
-        # the query module's own tests. They run on this host; the target build below only builds.
-        Invoke-Stage "cargo test --no-default-features (capability and query legs)$Label" { & $cargo @On test --no-default-features --test capability --test capability_gate --test query_grant --test query }
+        # The capability law, document and gate vectors and the query grant and declaration vectors are claimed for both
+        # profiles (DECISIONS.md D11, D13, D14, D17): run again on the library built as the embedded build builds it (no
+        # `std`), with the query module's own tests, printing the declaration family's count line. They run on this host;
+        # the target build below only builds.
+        Invoke-Stage "cargo test --no-default-features (capability and query legs)$Label" { & $cargo @On test --no-default-features --test capability --test capability_gate --test query_grant --test query_declaration --test query -- --nocapture }
         # The decision path, a capability's and a read's, at zero allocations once the registry is built (D12, D14):
         # every row asserted, on both profiles, in debug and in release.
         Invoke-Stage "allocation table, without std, debug$Label" { & $cargo @On test --no-default-features --test capability_alloc -- --nocapture }

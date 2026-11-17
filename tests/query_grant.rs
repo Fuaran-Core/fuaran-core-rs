@@ -58,33 +58,6 @@ fn queries(d: &JVal) -> Vec<Query> {
         .collect()
 }
 
-/// A cell as the file writes it: `{kind, text}`, no text for a null.
-fn cell_of(c: &JVal) -> Cell {
-    let text = || s(c, "text").to_string();
-    match s(c, "kind") {
-        "int" => Cell::Int(text().parse().expect("an int's text")),
-        "float" => Cell::Float(text().parse().expect("a float's text")),
-        "bool" => Cell::Bool(match s(c, "text") {
-            "true" => true,
-            "false" => false,
-            other => panic!("a bool's text is {other}"),
-        }),
-        "string" => Cell::Str(text()),
-        "date" => Cell::Date(text()),
-        "timestamp" => Cell::Timestamp(text()),
-        "decimal" => Cell::Decimal(text()),
-        "null" => Cell::Null,
-        other => panic!("unknown cell kind {other}"),
-    }
-}
-
-fn args_of(input: &JVal) -> Vec<(String, Cell)> {
-    arr(input, "args")
-        .iter()
-        .map(|a| (s(a, "name").to_string(), cell_of(get(a, "cell"))))
-        .collect()
-}
-
 fn grant_of(input: &JVal) -> Option<Grant> {
     input.field("grant").map(|g| match g {
         JVal::Str(identity) => Grant::of_invocation(identity.clone()),

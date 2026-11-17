@@ -6,7 +6,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use fuaran_core::capability::PolicyDecision;
+use fuaran_core::column::Cell;
 use fuaran_core::decode::DecodeError;
 use fuaran_core::json::{self, JVal, PathSeg, render_canonical};
 
@@ -111,4 +114,60 @@ pub fn path_json(e: &DecodeError) -> Vec<JVal> {
             PathSeg::Index(i) => JVal::Num(*i as f64),
         })
         .collect()
+}
+
+// ─── Shared shapes of the law files ──────────────────────────────────────────
+
+/// A cell as the query law files write it: `{kind, text}`, no text for a null,
+/// the text as it stands and never canonicalised; a float's text is its shortest
+/// round-trip form, or a non-finite float's token in quotes (`"NaN"`), as the
+/// canonical float layout writes it (DECISIONS.md D17.2).
+pub fn cell_of(c: &JVal) -> Cell {
+    let text = || s(c, "text").to_string();
+    match s(c, "kind") {
+        "int" => Cell::Int(text().parse().expect("an int's text")),
+        "float" => Cell::Float(match s(c, "text") {
+            "\"NaN\"" => f64::NAN,
+            "\"Infinity\"" => f64::INFINITY,
+            "\"-Infinity\"" => f64::NEG_INFINITY,
+            t => t.parse().expect("a float's text"),
+        }),
+        "bool" => Cell::Bool(match s(c, "text") {
+            "true" => true,
+            "false" => false,
+            other => panic!("a bool's text is {other}"),
+        }),
+        "string" => Cell::Str(text()),
+        "date" => Cell::Date(text()),
+        "timestamp" => Cell::Timestamp(text()),
+        "decimal" => Cell::Decimal(text()),
+        "null" => Cell::Null,
+        other => panic!("unknown cell kind {other}"),
+    }
+}
+
+/// A read's arguments as the query law files write them: `args`, each
+/// `{name, cell}`.
+pub fn args_of(input: &JVal) -> Vec<(String, Cell)> {
+    arr(input, "args")
+        .iter()
+        .map(|a| (s(a, "name").to_string(), cell_of(get(a, "cell"))))
+        .collect()
+}
+
+/// A gate rule's decision as the gate tables write it: `allow`, `needsApproval`,
+/// or `deny` with its `message` and `alternatives`.
+pub fn decision_of(v: &JVal) -> PolicyDecision {
+    match s(v, "decision") {
+        "allow" => PolicyDecision::Allow,
+        "needsApproval" => PolicyDecision::NeedsApproval,
+        "deny" => PolicyDecision::deny_with(
+            s(v, "message"),
+            str_items(v, "alternatives")
+                .iter()
+                .map(|a| Arc::from(a.as_str()))
+                .collect::<Vec<Arc<str>>>(),
+        ),
+        other => panic!("unknown decision {other}"),
+    }
 }

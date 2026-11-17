@@ -1,7 +1,7 @@
 //! Every family the reference emits, by name: each family a manifest under
 //! Core's `conformance/` declares at the pinned commit is either answered by a
 //! leg of this crate or named here as not answered, with the reason and the
-//! decision that records it (DECISIONS.md D8, D13, D14).
+//! decision that records it (DECISIONS.md D8, D13, D14, D17).
 //!
 //! The reference's manifests say a host whose adoption reads `proposed` reports
 //! the family BY NAME rather than skipping it. This leg is where the crate does:
@@ -36,6 +36,7 @@ const ANSWERED: &[(&str, &str, &str)] = &[
     ("laws", "capabilityDocumentLaws", "capability"),
     ("laws", "capabilityGateLaws", "capability_gate"),
     ("laws", "queryGrantLaws", "query_grant"),
+    ("laws", "queryDeclarationLaws", "query_declaration"),
     ("refusals", "codecRefusals", "conformance"),
     ("refusals", "seamRefusals", "seams"),
     ("premises", "premiseStringModel", "premises"),
