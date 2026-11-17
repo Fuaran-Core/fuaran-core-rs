@@ -11,10 +11,12 @@
 # change here (core-pin.json), never something a push to Core does to this build.
 #
 # The whole gate is run.ps1, so CI and the one-command entry point cannot diverge. It runs in two
-# jobs (DECISIONS.md D15): at stable, with the format check and the lints, and at the minimum Rust
-# version Cargo.toml declares (`rust-version`, read from the manifest, so the workflow names no
-# version of its own), where run.ps1 -MinimumOnly fails unless that toolchain and its embedded
-# target are installed, so a green minimum job is one whose legs ran.
+# jobs (DECISIONS.md D15, D16): at stable, with the format check and the lints, and at the exact
+# minimum Rust version Cargo.toml declares (`rust-version`, read from the manifest in one step below,
+# so the workflow names no version of its own; "1.85" is read as 1.85.0). There run.ps1 -MinimumOnly
+# fails unless an installed toolchain's own compiler reports exactly that version and its embedded
+# target is installed, so a green minimum job is one whose legs ran at the floor, and a toolchain
+# that resolved to another patch turns it red.
 
 name: CI
 

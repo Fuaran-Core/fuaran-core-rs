@@ -13,12 +13,14 @@
 # The no_std build is part of the contract, so a missing target FAILS here, naming the remedy;
 # -SkipEmbedded is the deliberate opt-out.
 #
-# The minimum (DECISIONS.md D15): the format check and the lints are the newest tools' and run on the default toolchain
-# only; every other leg runs again at the minimum, through rustup (`cargo +<toolchain>`), when that toolchain is
-# installed. When it is not, the run names it as missing with the commands that install it, and does not run its legs:
-# nothing is installed from here. -MinimumOnly runs the minimum's legs alone and FAILS when the toolchain or its
-# embedded target is missing (CI's minimum job, so a green job is one whose legs ran); -SkipMinimum leaves them to that
-# job (CI's stable job).
+# The minimum (DECISIONS.md D15, D16): the format check and the lints are the newest tools' and run on the default
+# toolchain only; every other leg runs again at the exact floor Cargo.toml declares (`rust-version`, a missing patch
+# component read as .0, so "1.85" is 1.85.0), through rustup (`cargo +<toolchain>`), on the installed toolchain whose own
+# compiler reports exactly that version. When none does, the run names the floor as missing with the commands that
+# install it; if another patch of the same release is installed, its legs run there and the run says so, never calling
+# it the floor. Nothing is installed from here. -MinimumOnly runs the floor's legs alone and FAILS unless the floor and
+# its embedded target are installed (CI's minimum job, so a green job is one whose legs ran at exactly the floor);
+# -SkipMinimum leaves them to that job (CI's stable job).
 #
 # -Verify runs the proofs (verification/README.md): the Kani harnesses and the Creusot replay, then prints the
 # replay record's identity. Each
@@ -139,54 +141,83 @@ if (-not $MinimumOnly) {
     Invoke-Legs -On @() -Label "" -Embedded $embedded
 }
 
-# The minimum: Cargo.toml's `rust-version`, read here so this script names no version of its own. A toolchain is
-# looked for among those rustup lists (`1.85`, or a patch of it such as `1.85.1`) and never installed from here.
-$minimum = (Select-String -Path Cargo.toml -Pattern '^rust-version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
-if (-not $minimum) { throw "Cargo.toml declares no rust-version." }
-$minimumSummary = "minimum $minimum"
-$install = "rustup toolchain install $minimum --profile minimal"
-$addTarget = "rustup target add $target --toolchain $minimum"
+# The minimum (D15, D16): the exact floor is Cargo.toml's `rust-version`, read here so this script names no version of its
+# own, with a missing patch component read as .0. A toolchain is chosen by the version its own compiler reports, never by
+# its name (rustup resolves the name `1.85` to the newest patch of 1.85), and cargo is handed that compiler for the legs.
+$declared = (Select-String -Path Cargo.toml -Pattern '^rust-version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+if (-not $declared) { throw "Cargo.toml declares no rust-version." }
+if ($declared -match '^\d+\.\d+$') { $floor = "$declared.0" }
+elseif ($declared -match '^\d+\.\d+\.\d+$') { $floor = $declared }
+else { throw "Cargo.toml's rust-version '$declared' is not major.minor or major.minor.patch." }
+$release = $floor -replace '\.\d+$', ''
+$minimumSummary = "minimum $floor"
+$install = "rustup toolchain install $floor --profile minimal"
+$addTarget = "rustup target add $target --toolchain $floor"
 if ($SkipMinimum) {
-    Write-Host "SKIPPED: the legs at the minimum Rust version $minimum (-SkipMinimum)"
+    Write-Host "SKIPPED: the legs at the minimum Rust version $floor (-SkipMinimum)"
     $minimumSummary += ": skipped (-SkipMinimum)"
 }
 elseif ($SkipBuild -and $SkipTests -and $SkipEmbedded) {
-    Write-Host "SKIPPED: the legs at the minimum Rust version $minimum (-SkipBuild -SkipTests -SkipEmbedded select none)"
+    Write-Host "SKIPPED: the legs at the minimum Rust version $floor (-SkipBuild -SkipTests -SkipEmbedded select none)"
     $minimumSummary += ": no leg selected"
 }
 else {
     $global:LASTEXITCODE = 0
-    $toolchain = $null
-    if ($rustup) {
-        $pattern = '^' + [regex]::Escape($minimum) + '(\.\d+)?-'
-        $toolchain = & $rustup toolchain list | ForEach-Object { ($_ -split '\s+')[0] } | Where-Object { $_ -match $pattern } | Select-Object -First 1
-    }
-    if (-not $toolchain) {
-        $why = if ($rustup) { "is not installed" } else { "cannot be looked for: rustup was not found" }
-        Write-Host "MISSING: the minimum Rust version Cargo.toml declares ($minimum) $why, so its legs did not run. Remedy:"
-        Write-Host "    $install"
-        if (-not $SkipEmbedded) { Write-Host "    $addTarget" }
-        if ($MinimumOnly) { Write-Host "FAILED: -MinimumOnly needs the minimum's toolchain"; exit 1 }
-        $global:LASTEXITCODE = 0
-        $minimumSummary += ": MISSING, its legs did not run"
-    }
-    else {
-        $embedded = $false
-        if (-not $SkipEmbedded) {
-            if ((& $rustup target list --installed --toolchain $toolchain) -contains $target) { $embedded = $true }
-            else {
-                Write-Host "MISSING: the $target target at the minimum ($toolchain), so its no_std build will not run. Remedy:"
-                Write-Host "    rustup target add $target --toolchain $toolchain"
-                if ($MinimumOnly) { Write-Host "FAILED: -MinimumOnly needs the minimum's $target target"; exit 1 }
-                $global:LASTEXITCODE = 0
-            }
+    # Nothing here may install a toolchain: only names rustup lists as installed are called, and rustup is told not to
+    # fetch one. RUSTC is set for the legs to the compiler whose version was read, so a RUSTC or build.rustc of the
+    # caller's cannot put another compiler under the floor's name.
+    $autoInstall = $env:RUSTUP_AUTO_INSTALL
+    $callerRustc = $env:RUSTC
+    $env:RUSTUP_AUTO_INSTALL = "0"
+    try {
+        # Every installed toolchain of the floor's release (`1.85`, `1.85.0`, `1.85.1`, ...), with what its compiler reports.
+        $held = @()
+        if ($rustup) {
+            $pattern = '^' + [regex]::Escape($release) + '(\.\d+)?-'
+            $held = @(& $rustup toolchain list | ForEach-Object { ($_ -split '\s+')[0] } | Where-Object { $_ -match $pattern } | ForEach-Object {
+                    $compiler = & $rustup which rustc --toolchain $_ | Select-Object -First 1
+                    $reported = "$(& $compiler --version)"
+                    $version = if ($reported -match '^rustc (\d+\.\d+\.\d+) ') { $Matches[1] } else { $null }
+                    [pscustomobject]@{ Toolchain = $_; Compiler = $compiler; Reported = $reported; Version = $version }
+                })
         }
-        # Nothing here may install a toolchain: the one named is installed, and rustup is told not to fetch one.
-        $autoInstall = $env:RUSTUP_AUTO_INSTALL
-        $env:RUSTUP_AUTO_INSTALL = "0"
-        try { Invoke-Legs -On @("+$toolchain") -Label " (minimum $toolchain)" -Embedded $embedded }
-        finally { $env:RUSTUP_AUTO_INSTALL = $autoInstall }
-        $minimumSummary += ": ran on $toolchain" + $(if (-not $SkipEmbedded -and -not $embedded) { ", its no_std build MISSING" } else { "" })
+        $at = $held | Where-Object { $_.Version -eq $floor } | Select-Object -First 1
+        $other = $held | Where-Object { $_.Version } | Select-Object -First 1
+        if (-not $at) {
+            $why = if (-not $rustup) { "cannot be looked for: rustup was not found" }
+            elseif ($other) { "is not installed ($($other.Toolchain) reports $($other.Reported), another patch of $release)" }
+            else { "is not installed" }
+            Write-Host "MISSING: the minimum Rust version Cargo.toml declares, exactly $floor, $why. Remedy:"
+            Write-Host "    $install"
+            if (-not $SkipEmbedded) { Write-Host "    $addTarget" }
+            if ($MinimumOnly) { Write-Host "FAILED: -MinimumOnly runs only at exactly $floor, and no installed toolchain's compiler reports it"; exit 1 }
+            $global:LASTEXITCODE = 0
+            if (-not $other) { $minimumSummary += ": MISSING, its legs did not run" }
+        }
+        # At the floor; else, outside -MinimumOnly, at another patch of its release, named as that and never as the floor.
+        $run = if ($at) { $at } else { $other }
+        if ($run) {
+            $label = if ($at) { " (minimum $floor, $($run.Toolchain))" } else { " ($($run.Version), NOT the minimum $floor, $($run.Toolchain))" }
+            Write-Host "the legs at the minimum run on $($run.Toolchain): $($run.Reported)$(if (-not $at) { ", which is not the floor $floor" })"
+            $embedded = $false
+            if (-not $SkipEmbedded) {
+                if ((& $rustup target list --installed --toolchain $run.Toolchain) -contains $target) { $embedded = $true }
+                else {
+                    Write-Host "MISSING: the $target target on $($run.Toolchain), so its no_std build will not run. Remedy:"
+                    Write-Host "    rustup target add $target --toolchain $($run.Toolchain)"
+                    if ($MinimumOnly) { Write-Host "FAILED: -MinimumOnly needs the $target target at the minimum"; exit 1 }
+                    $global:LASTEXITCODE = 0
+                }
+            }
+            $env:RUSTC = $run.Compiler
+            Invoke-Legs -On @("+$($run.Toolchain)") -Label $label -Embedded $embedded
+            $minimumSummary += $(if ($at) { ": ran at $floor on $($run.Toolchain)" } else { ": MISSING; its legs ran at $($run.Version) on $($run.Toolchain), another patch, not the minimum" }) +
+            $(if (-not $SkipEmbedded -and -not $embedded) { ", its no_std build MISSING" } else { "" })
+        }
+    }
+    finally {
+        $env:RUSTUP_AUTO_INSTALL = $autoInstall
+        $env:RUSTC = $callerRustc
     }
 }
 
