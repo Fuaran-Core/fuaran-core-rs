@@ -11,6 +11,9 @@
 # change here (core-pin.json), never something a push to Core does to this build.
 #
 # The whole gate is run.ps1, so CI and the one-command entry point cannot diverge.
+#
+# The gate runs twice: at stable, and at the minimum Rust version Cargo.toml declares
+# (`rust-version`), read from the manifest so the two cannot drift apart.
 
 name: CI
 
@@ -25,7 +28,12 @@ permissions:
 
 jobs:
   build:
+    name: gate (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, minimum]
     defaults:
       run:
         working-directory: fuaran-core-rs
@@ -50,15 +58,36 @@ jobs:
       - name: Assert Core is where the tests resolve it
         run: test -f ../fuaran-core/conformance/apply/manifest.json
 
+      # The minimum is the manifest's `rust-version`, read here so the workflow names no version of its own.
+      - name: Resolve the toolchain
+        id: toolchain
+        run: |
+          if [ "${{ matrix.toolchain }}" = "minimum" ]; then
+            v=$(sed -n 's/^rust-version *= *"\([^"]*\)".*/\1/p' Cargo.toml)
+            test -n "$v" || { echo "Cargo.toml declares no rust-version"; exit 1; }
+          else
+            v=stable
+          fi
+          echo "name=$v" >> "$GITHUB_OUTPUT"
+          echo "toolchain: $v"
+
       # rustup is preinstalled on the runner, so the toolchain is installed directly rather than
       # through a third-party action referenced by a moving branch name.
       - name: Set up Rust
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
-          rustup target add thumbv7em-none-eabihf
+          rustup toolchain install ${{ steps.toolchain.outputs.name }} --profile minimal --component rustfmt --component clippy
+          rustup default ${{ steps.toolchain.outputs.name }}
+          rustup target add thumbv7em-none-eabihf --toolchain ${{ steps.toolchain.outputs.name }}
           rustc --version && cargo --version
 
       - name: Gate (run.ps1)
         shell: pwsh
         run: ./run.ps1
+
+      # Measurement (Phase 681): the allocation table in release, on both profiles.
+      - name: Allocation table in release (hosted, then without std)
+        if: always()
+        run: |
+          rustc --version
+          cargo test --release --all-features --test capability_alloc
+          cargo test --release --no-default-features --test capability_alloc
