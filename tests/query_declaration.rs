@@ -450,18 +450,25 @@ fn every_vector_of_the_family() {
     let qs = queries(&d);
     let r = registry_of(&d, &qs);
     let mut counts = [0usize; CASES.len()];
+    // Every vector is answered before the leg judges, so a red names each vector
+    // answered differently, not only the first.
+    let mut wrong = Vec::new();
     for v in vectors(&d) {
         let case = s(v, "case");
         let i = CASES
             .iter()
             .position(|c| *c == case)
             .unwrap_or_else(|| panic!("{}: unknown case {case}", s(v, "id")));
-        assert_eq!(
+        let (got, want) = (
             render_canonical(&answer(&qs, &r, v)),
             render_canonical(&expected(v)),
-            "{}",
-            s(v, "id")
         );
+        if got != want {
+            wrong.push(format!(
+                "{} ({case}): answered {got}, expected {want}",
+                s(v, "id")
+            ));
+        }
         counts[i] += 1;
     }
     let total: usize = counts.iter().sum();
@@ -470,6 +477,12 @@ fn every_vector_of_the_family() {
         counts,
         [36, 21, 4, 14, 9],
         "the vectors of each case, in {CASES:?}"
+    );
+    assert!(
+        wrong.is_empty(),
+        "{} of {total} vectors answered differently:\n{}",
+        wrong.len(),
+        wrong.join("\n")
     );
     eprintln!("queryDeclarationLaws: {total} of {total} vectors ({CASES:?} = {counts:?})");
 }
