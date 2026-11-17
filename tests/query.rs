@@ -1,9 +1,13 @@
-//! Port-side tests of the query declaration (DECISIONS.md D14): what the
-//! reference's vectors do not reach. No Core family reads a query declaration,
-//! so every refusal of the declaration reader and of the admission gate is
-//! pinned here to the reference's text at the pin (`a9592b7`, `0.43.0`), each
-//! test citing the file and line it is the twin of under
-//! `src/Fuaran.Core.Query/` (`Query.fs`, `QueryRegistry.fs`, `QueryCodec.fs`) or
+//! Port-side tests of the query declaration (DECISIONS.md D14, D17): what the
+//! reference's vectors do not reach. Since Core `bd1a339f` (`0.43.1`, draft) the
+//! family `queryDeclarationLaws` (tests/query_declaration.rs) pins the code, the
+//! path and the error value of every refusal of the declaration reader, the
+//! admission gate, registration and validation, so those assertions retired from
+//! here (the table is D17.9). What stays is the port's own: each refusal's
+//! sentence (`QueryError::describe`, and the reader's message carrying it), which
+//! no vector pins, and the few codes, paths and values no vector reaches, each
+//! test citing the reference's file and line under `src/Fuaran.Core.Query/`
+//! (`Query.fs`, `QueryRegistry.fs`, `QueryCodec.fs`) or
 //! `src/Fuaran.Core.Column/Column.fs`. The predicate and order-key documents are
 //! also read inside a declaration against the `seamRefusals` vectors that read
 //! them alone, so the typed reader answers what the seams' reader answers.
@@ -95,23 +99,18 @@ fn path(segs: &[&str]) -> Vec<PathSeg> {
         .collect()
 }
 
-/// The admission refusal, asserted the same three ways: the gate with its path,
-/// `register`, and the declaration reader over the declaration's own text (when
-/// its text can carry it), which refuses `OutOfRange` at the path with the
-/// registry's sentence.
-fn refused(q: &Query, at: &[&str], expected: &QueryError, sentence: &str) {
-    assert_eq!(expected.describe(), sentence);
-    let (p, e) = q.admission_fault_at().expect("the gate refuses");
-    assert_eq!((&p, &e), (&path(at), expected));
-    assert_eq!(
-        QueryRegistry::new().register(q.clone()).unwrap_err(),
-        *expected
-    );
+/// The sentence of the gate's refusal of `q`: what the port says of it, which no
+/// vector pins (D17.9). The refusal's code, path and value are the family's.
+fn says(q: &Query, sentence: &str) {
+    let e = q.admission_fault().expect("the gate refuses");
+    assert_eq!(e.describe(), sentence);
 }
 
-fn refused_on_read(q: &Query, at: &[&str], sentence: &str) {
+/// The declaration reader over the declaration's own text (when its text can
+/// carry it) refuses with the registry's sentence; its code and path are the
+/// family's (`declarationRefused`).
+fn refused_on_read(q: &Query, sentence: &str) {
     let e = Query::decode(&q.encode()).expect_err("the reader refuses");
-    assert_eq!((e.code, e.path.clone()), (DecodeCode::OutOfRange, path(at)));
     assert_eq!(
         e.message,
         format!("a declaration the registry admits: {sentence}")
@@ -130,11 +129,8 @@ fn a_parameter_declared_twice_is_refused_at_params() {
         column: "nope".to_string(),
     }];
     let sentence = "Refused: parameter 'rate' is given more than once. Give each parameter once.";
-    let e = QueryError::DuplicateParam {
-        name: "rate".to_string(),
-    };
-    refused(&q, &["params"], &e, sentence);
-    refused_on_read(&q, &["params"], sentence);
+    says(&q, sentence);
+    refused_on_read(&q, sentence);
 }
 
 /// Query.fs:76-77, 232-241.
@@ -154,14 +150,8 @@ fn a_predicate_on_an_undeclared_column_is_refused_naming_the_columns() {
     let sentence = format!(
         "Refused: 'nope' is not a column of this query's result. Its columns are {COLUMNS}."
     );
-    let e = QueryError::UnknownColumn {
-        name: "nope".to_string(),
-        declared: ["n", "region", "at", "amount", "day", "score"]
-            .map(String::from)
-            .to_vec(),
-    };
-    refused(&q, &["where", "1"], &e, &sentence);
-    refused_on_read(&q, &["where", "1"], &sentence);
+    says(&q, &sentence);
+    refused_on_read(&q, &sentence);
     // A result with no columns says so.
     let bare = Query {
         result_schema: Vec::new(),
@@ -181,22 +171,8 @@ fn contains_on_a_column_that_is_not_a_string_is_not_applicable() {
         text: "1".to_string(),
     });
     let sentence = "Refused: the filter 'contains' does not apply to column 'n', which is int. It applies to string columns only.";
-    let e = QueryError::PredicateNotApplicable {
-        predicate: "contains".to_string(),
-        column: "n".to_string(),
-        column_type: ColumnType::Int,
-    };
-    refused(&q, &["where", "0"], &e, sentence);
-    refused_on_read(&q, &["where", "0"], sentence);
-    // On a string column it is admitted.
-    assert_eq!(
-        with_filter(ColumnPredicate::Contains {
-            column: "region".to_string(),
-            text: "eu".to_string(),
-        })
-        .admission_fault(),
-        None
-    );
+    says(&q, sentence);
+    refused_on_read(&q, sentence);
 }
 
 /// Query.fs:83-84, 259-264. A declaration's text cannot carry a `null` literal:
@@ -204,15 +180,8 @@ fn contains_on_a_column_that_is_not_a_string_is_not_applicable() {
 /// refusal is reached by a declaration built by hand.
 #[test]
 fn a_null_literal_is_ill_formed() {
-    let q = with_filter(eq("n", Cell::Null));
-    let e = QueryError::IllFormedLiteral {
-        column: "n".to_string(),
-        reason: "a null literal compares with nothing; test for absence with isNull".to_string(),
-    };
-    refused(
-        &q,
-        &["where", "0"],
-        &e,
+    says(
+        &with_filter(eq("n", Cell::Null)),
         "Refused: the filter on column 'n' compares with a value the column cannot carry: a null literal compares with nothing; test for absence with isNull.",
     );
 }
@@ -222,40 +191,24 @@ fn a_null_literal_is_ill_formed() {
 fn a_literal_of_another_type_is_a_type_mismatch_saying_how_to_write_one() {
     let q = with_filter(eq("n", Cell::Str("5".to_string())));
     let sentence = "Refused: the filter on column 'n' compares with a string value; the column is int, and a filter compares with a value of the column's own type.";
-    let e = QueryError::PredicateTypeMismatch {
-        column: "n".to_string(),
-        expected: ColumnType::Int,
-        got: ColumnType::String,
-    };
-    refused(&q, &["where", "0"], &e, sentence);
-    refused_on_read(&q, &["where", "0"], sentence);
-    // No widening: an integer literal on a decimal column is refused, with how
-    // to write a decimal.
+    says(&q, sentence);
+    refused_on_read(&q, sentence);
+    // An integer literal on a decimal column says how to write a decimal.
     let q = with_filter(eq("amount", Cell::Int(5)));
     let sentence = "Refused: the filter on column 'amount' compares with a int value; the column is decimal, and a filter compares with a value of the column's own type. Write a decimal as a JSON string of decimal text, such as \"12.50\": an optional '-', digits, and an optional '.' followed by digits; never as a JSON number.";
-    let e = QueryError::PredicateTypeMismatch {
-        column: "amount".to_string(),
-        expected: ColumnType::Decimal,
-        got: ColumnType::Int,
-    };
-    refused(&q, &["where", "0"], &e, sentence);
-    refused_on_read(&q, &["where", "0"], sentence);
-    // Nor on a float column.
-    assert!(matches!(
-        with_filter(eq("score", Cell::Int(1))).admission_fault(),
-        Some(QueryError::PredicateTypeMismatch { .. })
-    ));
+    says(&q, sentence);
+    refused_on_read(&q, sentence);
 }
 
 /// Query.fs:86-93 (Phase 422), 146-158.
 #[test]
 fn a_timestamp_literal_fits_a_column_at_least_as_fine_and_no_finer() {
-    // A whole second is a `timestamp` cell, and fits a millisecond column.
+    // A whole second is a `timestamp` cell, fits a millisecond column, and its
+    // declaration reads back to itself.
     let coarse = with_filter(eq(
         "at",
         Cell::Timestamp("2026-11-15T09:30:00Z".to_string()),
     ));
-    assert_eq!(coarse.admission_fault(), None);
     assert_eq!(Query::decode(&coarse.encode()).unwrap(), coarse);
     // Microseconds do not.
     let fine = with_filter(eq(
@@ -263,13 +216,8 @@ fn a_timestamp_literal_fits_a_column_at_least_as_fine_and_no_finer() {
         Cell::Timestamp("2026-11-15T09:30:00.123456Z".to_string()),
     ));
     let sentence = "Refused: the filter on column 'at' compares with a timestamp_us value; the column is timestamp_ms, and a filter compares with a value of the column's own type. Write a timestamp as a JSON string, YYYY-MM-DDThh:mm:ssZ, or YYYY-MM-DDThh:mm:ss.FZ with up to 3 fraction digits and no trailing zero.";
-    let e = QueryError::PredicateTypeMismatch {
-        column: "at".to_string(),
-        expected: ColumnType::Timestamp(TimeUnit::Milliseconds),
-        got: ColumnType::Timestamp(TimeUnit::Microseconds),
-    };
-    refused(&fine, &["where", "0"], &e, sentence);
-    refused_on_read(&fine, &["where", "0"], sentence);
+    says(&fine, sentence);
+    refused_on_read(&fine, sentence);
 }
 
 /// Query.fs:45-67 (`literalReason`, `literalFault`); Column.fs:531, 850. A
@@ -282,35 +230,18 @@ fn a_literal_its_column_cannot_carry_is_ill_formed_with_the_column_layers_reason
         Some(QueryError::IllFormedLiteral { column, reason }) => (column, reason),
         other => panic!("not an ill-formed literal: {other:?}"),
     };
+    // The family pins `NaN` (`admission-a-float-not-finite`); the reason names the
+    // token, so the other non-finite float's is the port's to pin.
     assert_eq!(
-        reason(with_filter(eq("score", Cell::Float(f64::NAN)))),
+        reason(with_filter(eq("score", Cell::Float(f64::NEG_INFINITY)))),
         (
             "score".to_string(),
-            "the float NaN is not finite, and the wire has no non-finite float".to_string()
+            "the float -Infinity is not finite, and the wire has no non-finite float".to_string()
         )
     );
-    assert_eq!(
-        reason(with_filter(eq("score", Cell::Float(f64::NEG_INFINITY)))).1,
-        "the float -Infinity is not finite, and the wire has no non-finite float"
-    );
-    assert_eq!(
-        reason(with_filter(eq(
-            "amount",
-            Cell::Decimal("12.50".to_string())
-        )))
-        .1,
-        "amount: a decimal cell must carry canonical decimal text — an optional '-', integer digits with no leading zero, and a '.' with fraction digits only where the fraction is non-zero, with no trailing zero (build the cell with Cell.decimal)"
-    );
-    assert_eq!(
-        reason(with_filter(eq("day", Cell::Date("2026-2-1".to_string())))).1,
-        "day: a date cell must carry a canonical ISO-8601 date, YYYY-MM-DD, naming a day that exists"
-    );
-    let e = with_filter(eq("day", Cell::Date("2026-02-30".to_string())))
-        .admission_fault()
-        .unwrap();
-    assert_eq!(
-        e.describe(),
-        "Refused: the filter on column 'day' compares with a value the column cannot carry: day: a date cell must carry a canonical ISO-8601 date, YYYY-MM-DD, naming a day that exists."
+    says(
+        &with_filter(eq("day", Cell::Date("2026-02-30".to_string()))),
+        "Refused: the filter on column 'day' compares with a value the column cannot carry: day: a date cell must carry a canonical ISO-8601 date, YYYY-MM-DD, naming a day that exists.",
     );
 }
 
@@ -324,15 +255,8 @@ fn an_order_names_declared_columns_each_once() {
     let sentence = format!(
         "Refused: 'nope' is not a column of this query's result. Its columns are {COLUMNS}."
     );
-    let declared: Vec<String> = ["n", "region", "at", "amount", "day", "score"]
-        .map(String::from)
-        .to_vec();
-    let e = QueryError::UnknownColumn {
-        name: "nope".to_string(),
-        declared,
-    };
-    refused(&unknown, &["orderBy", "0"], &e, &sentence);
-    refused_on_read(&unknown, &["orderBy", "0"], &sentence);
+    says(&unknown, &sentence);
+    refused_on_read(&unknown, &sentence);
     let twice = Query {
         order_by: vec![
             key("n", SortDirection::Descending),
@@ -342,22 +266,8 @@ fn an_order_names_declared_columns_each_once() {
         ..sales()
     };
     let sentence = "Refused: the order names column 'n' more than once. Name each column once.";
-    let e = QueryError::DuplicateSortColumn {
-        column: "n".to_string(),
-    };
-    refused(&twice, &["orderBy", "2"], &e, sentence);
-    refused_on_read(&twice, &["orderBy", "2"], sentence);
-}
-
-/// QueryRegistry.fs:44-52: the parameters, then the filter, then the order.
-#[test]
-fn the_filter_is_checked_before_the_order() {
-    let q = Query {
-        filter: vec![eq("n", Cell::Str("x".to_string()))],
-        order_by: vec![key("nope", SortDirection::Ascending)],
-        ..sales()
-    };
-    assert_eq!(q.admission_fault_at().unwrap().0, path(&["where", "0"]));
+    says(&twice, sentence);
+    refused_on_read(&twice, sentence);
 }
 
 /// Query.fs:171; QueryRegistry.fs:82-84 (`Seam.register`: the id first).
@@ -366,15 +276,8 @@ fn a_held_id_is_refused_before_the_declaration_is_admitted() {
     let r = QueryRegistry::new().register(sales()).unwrap();
     let mut again = sales();
     again.params.push(param("n", ColumnType::Int, false));
-    let e = r.register(again).unwrap_err();
     assert_eq!(
-        e,
-        QueryError::DuplicateQuery {
-            id: "sales".to_string()
-        }
-    );
-    assert_eq!(
-        e.describe(),
+        r.register(again).unwrap_err().describe(),
         "Refused: the query 'sales' is registered twice."
     );
 }
@@ -399,75 +302,16 @@ fn refusal(text: &str) -> (DecodeCode, Vec<PathSeg>) {
     (e.code, e.path)
 }
 
-/// QueryCodec.fs:147-176: the reader's refusals, member by member, in its order,
-/// on code and path.
+/// QueryCodec.fs:147-176: the reader's refusals no `declarationRefused` vector
+/// reaches, on code and path. Every other member's refusal, the reader's order
+/// and a document that is not an object are the family's (D17.9).
 #[test]
-fn the_reader_refuses_each_member_where_it_fails() {
+fn the_reader_refuses_the_members_no_vector_reaches() {
     use DecodeCode::*;
     let cases: &[(&str, Option<&str>, DecodeCode, &[&str])] = &[
-        ("$type", None, MissingField, &["$type"]),
-        ("$type", Some("\"capability\""), UnknownTag, &["$type"]),
-        ("id", None, MissingField, &["id"]),
-        ("id", Some("1"), WrongKind, &["id"]),
         ("params", None, MissingField, &["params"]),
-        ("params", Some("{}"), WrongKind, &["params"]),
-        (
-            "params",
-            Some("[{\"name\":\"n\",\"type\":\"integer\",\"required\":true}]"),
-            UnknownTag,
-            &["params", "0", "type"],
-        ),
-        (
-            "params",
-            Some("[{\"name\":\"n\",\"type\":\"int\",\"required\":\"yes\"}]"),
-            WrongKind,
-            &["params", "0", "required"],
-        ),
-        (
-            "params",
-            Some("[{\"type\":\"int\",\"required\":true}]"),
-            MissingField,
-            &["params", "0", "name"],
-        ),
-        (
-            "resultSchema",
-            Some("[{\"name\":\"n\",\"type\":\"integer\"}]"),
-            OutOfRange,
-            &["resultSchema", "0"],
-        ),
         ("resultSchema", Some("1"), WrongKind, &["resultSchema"]),
         ("effect", None, MissingField, &["effect"]),
-        (
-            "effect",
-            Some("{\"determinism\":\"network\",\"host\":\"everywhere\"}"),
-            UnknownTag,
-            &["effect", "host"],
-        ),
-        ("timeoutMs", Some("\"5\""), WrongKind, &["timeoutMs"]),
-        ("pageSize", Some("1.5"), WrongKind, &["pageSize"]),
-        // The strict reader reads no `null` (D13.3), as the reference's does.
-        ("pageSize", Some("null"), InvalidJson, &[]),
-        ("where", Some("{}"), WrongKind, &["where"]),
-        (
-            "where",
-            Some("[{\"$type\":\"like\",\"column\":\"region\"}]"),
-            UnknownTag,
-            &["where", "0", "$type"],
-        ),
-        (
-            "where",
-            Some("[{\"$type\":\"equalTo\",\"column\":\"n\",\"type\":\"int\",\"value\":1.5}]"),
-            OutOfRange,
-            &["where", "0", "value"],
-        ),
-        (
-            "orderBy",
-            Some("[{\"column\":\"n\",\"direction\":\"up\"}]"),
-            UnknownTag,
-            &["orderBy", "0", "direction"],
-        ),
-        ("source", None, MissingField, &["source"]),
-        ("source", Some("5"), OutOfRange, &["source"]),
     ];
     for (member, value, code, at) in cases {
         assert_eq!(
@@ -476,13 +320,6 @@ fn the_reader_refuses_each_member_where_it_fails() {
             "{member} = {value:?}"
         );
     }
-    // A document that is not an object at all.
-    assert_eq!(refusal("[]").1, Vec::<PathSeg>::new());
-    // The order the reader reads in: `id` before `params`, `where` before
-    // `source`.
-    let text = edited("id", Some("1"));
-    let text = text.replace("\"params\":[", "\"params\":7,\"_\":[");
-    assert_eq!(refusal(&text).1, path(&["id"]));
 }
 
 /// QueryCodec.fs:144 (`Decoder.field` / `optField`, which read past every other
@@ -648,7 +485,9 @@ fn args(xs: &[(&str, Cell)]) -> Vec<(String, Cell)> {
     xs.iter().map(|(n, c)| (n.to_string(), c.clone())).collect()
 }
 
-/// Query.fs:424-470, 172-211: each refusal in the order the reference checks.
+/// Query.fs:424-470, 172-211: each refusal's sentence, in the order the reference
+/// checks. Which refusal comes first, and its value, are the family's
+/// (`validateParams`, D17.9).
 #[test]
 fn the_arguments_are_held_to_the_parameters_first_refusal_first() {
     let q = sales();
@@ -673,26 +512,11 @@ fn the_arguments_are_held_to_the_parameters_first_refusal_first() {
         "Refused: parameter 'n' must be int; you sent string."
     );
     let e = refuse(&[("rate", Cell::Float(1.0))]);
-    assert_eq!(
-        e,
-        QueryError::RequiredParamsUnbound {
-            names: vec!["n".to_string()]
-        }
-    );
     assert_eq!(e.describe(), "Refused: required parameters missing: 'n'.");
     let e = refuse(&[("n", Cell::Null)]);
     assert_eq!(
         e.describe(),
         "Refused: required parameters bound to no value: 'n'."
-    );
-    // An integer fills a float parameter; a null binds any optional one.
-    assert_eq!(
-        q.validate_params(&args(&[
-            ("n", Cell::Int(1)),
-            ("rate", Cell::Int(2)),
-            ("tag", Cell::Null)
-        ])),
-        Ok(())
     );
     let none = Query {
         params: Vec::new(),

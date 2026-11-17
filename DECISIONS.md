@@ -1056,3 +1056,46 @@ certified on the library as the embedded build builds it, on the host, at the fl
 
 **D17.8 — the version does not move.** No public item is added, removed or changed: the leg uses what D14 built. By
 D11.8's rule `0.0.5-alpha.1` stays. No crate release, tag or publish.
+
+**D17.9 — the port-side pins retire where a vector pins the same thing.** D14.4 pinned each refusal of the declaration
+reader, the admission gate, registration and validation in `tests/query.rs`, to the reference's text, because no vector
+reached them. Now the family does, so every assertion there on a code, a path or an error value that a vector pins is
+removed: one place certifies each claim, and it is the reference's. An assertion counts as pinned when a vector pins the
+same clause on the same member with the same code, path and value, whatever literal reaches it (the port's
+`timeoutMs: "5"` and the family's `timeoutMs: 1.5` are one clause of one member, `WrongKind` at `timeoutMs`). What
+stays is the port's own: every sentence (`QueryError::describe`, and the reader's message that carries it), which the
+family pins nowhere (D263.3), now asserted of the refusal the gate or the reader actually gives rather than of a value
+the test built; and the few codes, paths and values no vector reaches (D17.10). By group, the twelve D263.1 names:
+
+| Group (`tests/query.rs`) | Retired: code, path or value | The vectors that pin it now |
+|---|---|---|
+| A parameter declared twice | the gate's path and `DuplicateParam`; `register`'s refusal; the reader's `OutOfRange` at `params` | `admission-a-parameter-declared-twice`, `register-a-new-id-held-to-the-gate`, `declaration-gate-a-parameter-declared-twice` |
+| A predicate on an undeclared column | the gate's path (`where.1`) and `UnknownColumn` with the declared columns; `register`; the reader's code and path | `admission-an-undeclared-column`, `admission-the-second-predicate`, `admission-an-undeclared-column-of-no-columns`, `register-a-new-id-held-to-the-gate`, `declaration-gate-an-undeclared-column`, `declaration-gate-the-second-predicate` |
+| `contains` off a string column | the gate's path and `PredicateNotApplicable`; `register`; the reader's code and path; `contains` on a string column admitted | `admission-contains-off-a-string-column`, `admission-contains-on-a-string-column`, `declaration-gate-contains-off-a-string-column` |
+| The `Null` literal | the gate's path and `IllFormedLiteral` with its reason; `register` | `admission-a-null-literal` |
+| A literal of another type | the gate's path and `PredicateTypeMismatch` (a string on an int column, an int on a decimal column, an int on a float column); `register`; the reader's code and path | `admission-a-literal-of-another-type`, `admission-an-integer-on-a-decimal-column`, `admission-an-integer-on-a-float-column`, `declaration-gate-a-literal-of-another-type` |
+| The timestamp's fit | a coarser timestamp admitted; a finer one's path and `PredicateTypeMismatch` (`timestamp_ms` / `timestamp_us`); `register`; the reader's code and path | `admission-a-timestamp-coarser-than-its-column`, `admission-a-timestamp-finer-than-its-column`, `declaration-gate-a-literal-of-another-type` |
+| The literal its column cannot carry | `IllFormedLiteral` for `NaN`, for non-canonical decimal text (`12.50`; the family's is `01.50`, one clause and one reason) and for a date not in canonical form (`2026-2-1`; the family's `2026-02-30` carries the same reason) | `admission-a-float-not-finite`, `admission-decimal-text-not-canonical`, `admission-a-date-that-names-no-day` |
+| The order | an undeclared order column's path and `UnknownColumn`; a column named twice, `DuplicateSortColumn` at `orderBy.2`; `register`; the reader's code and path | `admission-an-order-on-an-undeclared-column`, `admission-an-order-naming-a-column-twice`, `declaration-gate-an-order-on-an-undeclared-column`, `declaration-gate-an-order-naming-a-column-twice` |
+| The filter before the order | the path `where.0` (the whole test, which asserted nothing else) | `admission-the-filter-before-the-order`, `declaration-gate-the-filter-before-the-order` |
+| The held id before the gate | `DuplicateQuery` for a held id whose declaration the gate would refuse | `register-a-held-id-before-the-gate`, `register-a-held-id` |
+| The reader, member by member | the code and path of `$type` absent and another tag, `id` absent and not a string, `params` not a list, a parameter's unknown type, non-boolean `required` and missing `name`, a result column unread, the effect's unknown host, `timeoutMs` and `pageSize` not integers, a `null`, `where` not a list, an unknown predicate tag, a literal its stated type cannot read, an unknown direction, `source` absent and unread, a document that is not an object, and the order `id` before `params` | `declaration-no-type`, `declaration-another-type`, `declaration-the-id-before-the-params`, `declaration-an-id-not-a-string`, `declaration-params-not-a-list`, `declaration-a-parameter-type-unknown`, `declaration-a-parameter-required-not-a-boolean`, `declaration-a-parameter-without-a-name`, `declaration-a-result-column-unread`, `declaration-an-effect-host-unknown`, `declaration-a-timeout-with-a-fraction`, `declaration-a-page-size-as-a-string`, `declaration-a-null`, `declaration-a-filter-not-a-list`, `declaration-a-predicate-tag-unknown`, `declaration-a-literal-not-of-its-stated-type`, `declaration-an-order-direction-unknown`, `declaration-no-source`, `declaration-a-source-unread`, `declaration-not-an-object` |
+| The arguments, first refusal first | `RequiredParamsUnbound` for a required name left out; an integer filling a float and a null binding an optional accepted | `validate-a-required-name-left-out`, `validate-an-integer-fills-a-float`, `validate-a-null-binds-an-optional` |
+
+**D17.10 — what stays, though a vector might seem to pin it.** Each is held for review, with its reason.
+
+- The reader's code and path for `params` absent (`MissingField` at `params`), `resultSchema` not a list (`WrongKind`)
+  and `effect` absent (`MissingField`): the family pins `params` not a list, `resultSchema` absent and the effect's
+  unknown host, each another clause of the same member, so these three are reached by no vector.
+- `IllFormedLiteral`'s reason for `-Infinity`: the family pins `NaN`, and the reason names the token, so the value for
+  the other non-finite float is not pinned.
+- Every sentence the twelve groups assert (the refusal's `describe`, and the reader's `a declaration the registry
+  admits: …` message), including the sentence for a result with no columns and those that say how to write a decimal,
+  a date or a timestamp: the family pins no sentence (D263.3); they are the port's own.
+- `a_timestamp_literal_fits…`'s round trip of the coarser declaration through the writer and the reader: a codec round
+  trip, not a refusal's code, path or value.
+- Outside the twelve groups and not retired: the `seamRefusals` predicate and order-key vectors read inside a
+  declaration, the identity tests, and `the_registry_decides_reads…`, whose decisions under a `u8` context, `under`,
+  `unregister` and the resolver's own refusal no vector reaches; its `RequiredParamsUnbound` before the gate and its
+  `NoSuchQuery` sentence overlap `dispatch-validated-before-the-gate` and `dispatch-unregistered` only in kind (another
+  registry, another context type, a sentence), so it stays whole as the port's test of the registry's verbs.
