@@ -71,6 +71,13 @@ jobs:
           if [ "${{ matrix.toolchain }}" = "minimum" ]; then
             v=$(sed -n 's/^rust-version *= *"\([^"]*\)".*/\1/p' Cargo.toml)
             test -n "$v" || { echo "Cargo.toml declares no rust-version"; exit 1; }
+            # The exact floor: a declared version with no patch component is read as .0, so "1.85" is 1.85.0 and
+            # not whatever patch rustup resolves the bare name to; three components are taken as written.
+            case "$v" in
+              *.*.*) ;;
+              *.*) v="$v.0" ;;
+              *) echo "Cargo.toml's rust-version '$v' is not major.minor or major.minor.patch"; exit 1 ;;
+            esac
           else
             v=stable
           fi
