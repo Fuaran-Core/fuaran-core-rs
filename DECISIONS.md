@@ -890,3 +890,75 @@ capability and query run into its own stage, so it is not run twice.
 
 **D15.7 — the version does not move.** The declared minimum did not rise and no public item changed, so by D11.8's
 rule `0.0.5-alpha.1` stays. The pin does not move: Core `a9592b7` (`0.43.0`, released).
+
+## D16 — 2026-11-17 — the minimum is the exact version the manifest declares: `1.85` is 1.85.0, and the minimum job fails unless the compiler that ran its legs reports it
+
+Phase 682. D15 put the gate at the declared minimum, but CI installed the toolchain by the bare name `1.85`, which rustup
+resolves to the newest patch of that release, and D15.1 measured 1.85.1. A host on 1.85.0 is inside what
+`rust-version = "1.85"` admits and was outside what anything checked. This entry amends D15 where the minimum is read,
+installed, found and reported; D15's text is history and stands as written. D15.2 stands: the format check and the lints
+run at stable only. No source file, no public item and nothing the crate certifies changed.
+
+**D16.1 — measured first, at 1.85.0, on the crate as it stood.** One commit that changed the workflow only (`09f21c8`:
+the minimum job installs `1.85.0`) ran the gate in CI on the crate as it stood on `main` (`31bf80c`), against Core `a9592b7`. The
+minimum job's compiler is `rustc 1.85.0 (4d91de4e4 2025-02-17)`, in the setup step and in `run.ps1`'s own
+`rustc --version` stage; stable's is `rustc 1.100.0 (0ef1bc386 2026-11-09)`. At 1.85.0 every leg D15 runs at the
+minimum passes: `cargo build --all-features` with no warning; `cargo test --all-features` in every binary, the
+conformance legs among them; the premises in release; the capability and query legs without `std`; the allocation
+table without `std` in debug and hosted and without `std` in release, every asserted row at zero and the reported rows
+as D15.6 records them (27 allocations of 1,222 bytes, 11 of 858, 56 of 1,858); the `thumbv7em-none-eabihf` build. So
+the job stays at 1.85.0 and the declared minimum stays `1.85`: nothing is fixed and nothing is raised.
+
+**D16.2 — the floor is exact, and read by one rule.** A declared version with two components is read with `.0` as its
+patch (`1.85` is 1.85.0, which is what Cargo admits under it); one with three is taken as written; anything else is
+refused. The workflow reads `Cargo.toml` and applies the rule in one step, and installs that version; `run.ps1` reads
+the same line by the same rule. The two readers cannot drift silently: if the workflow installs anything but the
+version `run.ps1` derives, the minimum job is red (D16.3 shows it). Two alternatives lost:
+
+- *Declaring `rust-version = "1.85.0"`.* It says the same thing to Cargo, and the rule is needed whatever the line says,
+  since a two-component declaration must still mean its `.0`. The manifest's line stays.
+- *One reader: the workflow asking `run.ps1` for the floor.* It would add a switch to the gate script that only CI
+  calls, to remove a drift the job already turns red on.
+
+**D16.3 — the minimum job asserts the version it ran at.** `run.ps1` lists the installed toolchains of the floor's
+release (`1.85`, `1.85.0`, `1.85.1`, ...), asks each one's own compiler (`rustup which rustc --toolchain`) for its
+version, and runs the minimum's legs on the toolchain whose compiler reports exactly the floor, chosen by what it
+prints and never by its name. Cargo is handed that compiler (`RUSTC`) for the legs, so a caller's `RUSTC` or
+`build.rustc` cannot put another compiler under the floor's name; the caller's `RUSTC` is restored after. Every stage at
+the minimum is labelled with the floor and the toolchain, and the last line says `ran at 1.85.0 on <toolchain>`.
+`-MinimumOnly` (CI's minimum job) fails before any leg unless such a toolchain is installed:
+`FAILED: -MinimumOnly runs only at exactly 1.85.0, and no installed toolchain's compiler reports it`. Shown on the pull
+request: a commit that pointed the job at `1.85.1` (`17159c7`) was red at the gate step with that line, and the commit
+that removed it (`abeda89`) was green at 1.85.0. Lost: asserting in the workflow, comparing `rustc --version` after the install. It checks the
+toolchain the step installed, not the one the legs ran on, and a local run would not carry it; the assertion sits
+where the legs' compiler is chosen.
+
+A toolchain is looked for only under a name that begins with the release (`1.85-…`, `1.85.0-…`); a toolchain linked
+under another name, or `stable` on a day it is the floor, is not looked at, and the run names the floor as missing.
+
+**D16.4 — the local gate, in each of the three cases.** With no arguments `run.ps1` still ends green whatever the
+minimum's state, and its last line says which state it was (D15.4's reason holds: `verify.ps1` runs on machines that
+hold one toolchain, and CI's minimum job is the evidence).
+
+- *The floor installed:* the legs run there, as in CI (`fuaran-core-rs: green (minimum 1.85.0: ran at 1.85.0 on …)`).
+  Exercised in CI.
+- *Nothing of the release installed:* `MISSING: the minimum Rust version Cargo.toml declares, exactly 1.85.0, is not
+  installed.`, with `rustup toolchain install 1.85.0 --profile minimal` and the target's command, and the last line
+  `minimum 1.85.0: MISSING, its legs did not run`. Exercised on the landing machine, which holds stable only.
+- *Another patch of the release, not the floor:* the same `MISSING` line, naming the toolchain and what it reports;
+  then the legs run on that patch, every stage labelled `(1.85.1, NOT the minimum 1.85.0, …)`, and the last line
+  `minimum 1.85.0: MISSING; its legs ran at 1.85.1 on …, another patch, not the minimum`. Exercised in CI, by a probe
+  step in the same red commit. Lost: naming the floor missing and running nothing there. A patch release of the same
+  minor compiles what the floor compiles with rare exceptions, so its legs are evidence about the release that costs
+  nothing to collect on a machine that holds it (one that followed D15's remedy, `rustup toolchain install 1.85`,
+  holds 1.85.1); the claim is never made from it, since the run leads with `MISSING` and never calls it the floor.
+
+Under `-MinimumOnly` a later patch is never run: the job fails before any leg.
+
+**D16.5 — what this amends in D15.** D15.1's measurement is of 1.85.1, as recorded; 1.85.0 is D16.1's. D15.3: the
+minimum is read in both places by D16.2's rule. D15.4: the toolchain is found by the version its compiler reports
+(D16.3), not by a name matching `1.85` or a patch of it, and the remedy names `1.85.0`. D15.5: the minimum job installs
+the exact floor. D15.2, D15.6 and D15.7 stand.
+
+**D16.6 — the version does not move.** The declared minimum did not rise and no public item changed, so by D11.8's rule
+`0.0.5-alpha.1` stays. The pin does not move: Core `a9592b7` (`0.43.0`, released).

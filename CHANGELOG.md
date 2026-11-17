@@ -3,6 +3,21 @@
 Every change to the crate's public API, newest first. Each entry names the Core commit the crate certifies against
 (`core-pin.json`), and whether that Core version is released.
 
+## 0.0.5-alpha.1, unchanged — 2026-11-17 — the gate at exactly the declared minimum, 1.85.0
+
+No change to the public API, to any answer, or to what the crate certifies against (Core `a9592b7`, `0.43.0`,
+released); the version stays `0.0.5-alpha.1` (D11.8: the declared minimum did not rise). DECISIONS.md D16.
+
+**Checked:** `rust-version = "1.85"` is now checked at exactly 1.85.0, the version it admits, rather than at 1.85.1, to
+which rustup resolves the name `1.85`. At rustc 1.85.0 the crate builds with every feature, without `std` and for
+`thumbv7em-none-eabihf`, and passes every test, the conformance legs and the allocation table among them, in debug and
+in release, hosted and without `std`. The declared minimum stays `1.85`.
+
+**Gate:** CI's minimum job installs the floor read from `Cargo.toml` (a missing patch component read as `.0`) and fails
+unless the compiler that ran its legs reports exactly that version. `run.ps1` chooses the minimum's toolchain by the
+version its compiler reports, not by its name; when the floor is missing it names `1.85.0` in the remedy, and when only
+another patch of 1.85 is installed it runs the legs there and says they are not the minimum.
+
 ## 0.0.5-alpha.1, unchanged — 2026-11-17 — the gate at the declared minimum Rust version
 
 No change to the public API, to any answer, or to what the crate certifies against (Core `a9592b7`, `0.43.0`,
