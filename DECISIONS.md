@@ -962,3 +962,97 @@ the exact floor. D15.2, D15.6 and D15.7 stand.
 
 **D16.6 — the version does not move.** The declared minimum did not rise and no public item changed, so by D11.8's rule
 `0.0.5-alpha.1` stays. The pin does not move: Core `a9592b7` (`0.43.0`, released).
+
+## D17 — 2026-11-17 — the port answers `queryDeclarationLaws` at Core `bd1a339f`: a declaration stated as data is built as the typed value, and every refusal outside the reader is compared as its query-error document through the seam codec
+
+Phase 683. Core's Phase 680 (the reference's D263) emits the refusals a query declaration and a read of it meet as a
+law family of its own, `queryDeclarationLaws`, 84 vectors in five cases. Until it, D14.4 pinned each of those refusals
+port-side to the reference's text, because no vector reached them. This entry records how the crate answers the
+family, decided before its leg was written, and what the port-side pins become.
+
+**D17.1 — the pin names a draft, and says so.** `core-pin.json` moves from `a9592b7` (`0.43.0`, released, tag
+`v0.43.0`) to `bd1a339f17302ab1cd6d6db732ff596fd4eaaaac`, a commit on Core's `main` inside its open `0.43.1` slot. No tag
+names it: it is a draft, not a release. The pin's `version` is `0.43.1`, the number the commit's own files stamp
+(`kitVersion`), and its `reason` says in words that it is a draft and not released, as the Phase 645 pin of the
+`0.43.0` draft (`c7d3013`) did; the README's conformance statement names the commit and says the same. Measured first
+(Phase 683's t1): between the two commits every vector file the crate already reads differs only in its `kitVersion`
+stamp, and every manifest only in the reference's own `adoption` records and the new family's row; no leg reads either,
+and every leg's count is what it was. Two alternatives lost. Waiting for `0.43.1` to be released: the family is on
+`main` now and certifies the gate the port already holds; moving the pin again at the release is the deliberate act it
+always is. A `version` of `0.43.1-draft`: Core names no such version, and a reader comparing the pin with Core's files
+would find nothing under it; the draft status is stated where a reader looks for it, in the reason and the README.
+
+**D17.2 — a declaration stated as data is built as the typed `Query`, not read.** `admissionFault` and `register`
+state a declaration as data because two of the gate's refusals no text can carry (D263.4): the parser refuses every
+`null`, and the column codec refuses or canonicalises a literal before the gate sees it. So the leg reads the named
+declaration of the file's `registry` through `Query::decode` (canonical text the reader admits, asserted to write back
+the bytes it was read from), then replaces each member the vector states with the typed value built directly from the
+data: `id` as a `String`; `params` as `QueryParam { name, ty, required }`, the type by `ColumnType::of_tag`; `where` as
+`ColumnPredicate`, a comparison by its tag with its `Cell`, `contains` with its column and text, `isNull` and
+`isNotNull` with their column; `orderBy` as `SortKey`, the direction by its tag. No JSON reader runs over a replaced
+member. A cell is read as `queryGrantLaws` spells one (`{kind, text}`, no text for a null) and its text is held as it
+stands: a date, timestamp or decimal is the string, never canonicalised; an integer is parsed as an `i32`; a float is
+parsed from its shortest round-trip text, or, written as a quoted token (`"NaN"`, `"Infinity"`, `"-Infinity"`, the
+canonical float layout's spelling), as that non-finite value. The cell reader is the one `tests/query_grant.rs` held,
+moved to `tests/common/mod.rs` and shared, with the quoted token added (`query-grant-laws.json` never writes one, so
+that leg's answers are unchanged). Two alternatives lost. Writing the data as declaration text and reading it: the two
+refusals D263.4 names would be unreachable, which is why the family states them as data. A constructor from data in
+the crate: a public item no consumer needs, to serve a test.
+
+**D17.3 — the registry and the gate table, from the file's head.** The registry is `QueryRegistry::<()>::new()` with
+each declaration of `registry` registered in the file's order, each asserted to write back the bytes it was read from.
+The gate table is one `QueryGate` per entry of `gates`, in order, each `PolicyGate::ignoring_context(policy, …)`
+answering the `decision` of the rule whose `query` is the read's id, and `Allow` for a read it has no rule for, as the
+file's description states. A rule's decision (`allow`, `needsApproval`, or `deny` with its `message` and
+`alternatives`) is read by the reader `tests/capability_gate.rs` held, moved to `tests/common/mod.rs` and shared.
+`register` vectors register into that registry; `dispatch` vectors dispatch through it under the unit context.
+
+**D17.4 — a refusal outside the reader is compared as its query-error document, through the seam codec.** The family
+pins every refusal but the reader's as the query-error document `QuerySeamCodec.encodeQueryError` writes (D263.3),
+never as a sentence. The crate holds that document's codec, the seam module's `QUERY_ERROR` declaration read by its
+one reader (`seam::read`, D8, certified by `seamRefusals`' 37 `queryError` vectors), and no typed writer of
+`QueryError` (D14.3 declined one, with no consumer). So the leg projects the typed `QueryError` into the document's
+members as the declaration names them (the case's tag under `$type`; names and lists; a column type by
+`ColumnType::tag`; a predicate by `ColumnPredicate::tag`, or as its document by `ColumnPredicate::to_json`; a policy,
+its reason and its alternatives), reads that document with the seam codec at `queryError`, reads the file's `error`
+with the same codec, and compares the two canonical re-encodings. The codec refuses a document its declaration does
+not admit, so a misspelled case or member in the projection is a refusal, not a silent mismatch, and a field the typed
+value carries wrongly reads back as different bytes. `QueryError::describe` is compared nowhere in the leg. A path
+(`at`, and `declarationRefused`'s `path`) is compared as the file writes it, each segment a string and an index its
+decimal digits (`["where","0"]`), which is this family's spelling; `seamRefusals` writes an index as a number, and each
+leg reads its own file. Every case is answered with the crate's public items as they stand, so no item is missing and
+none is added. Three alternatives lost. A public `QueryError::to_json`, the twin of `encodeQueryError`: an item added
+for a test, which D14.3's consumer rule declined. A reader of the document into a typed `QueryError`, compared by
+equality: the crate holds no such reader either, and it is the same projection run the other way, without the codec
+checking it. The sentence: the family pins none, by D263.3's reason.
+
+**D17.5 — what answers each case.** `declarationRefused`: `Query::decode` over `declaration`; `accept`, or `reject` with
+the `DecodeError`'s code and path (the admission gate's refusal is the reader's `OutOfRange` at the gate's path,
+D14.3). `admissionFault`: `Query::admission_fault_at` over the declaration D17.2 builds; `admitted`, or `refused` with
+`at` and the error's document, `admission_fault` asserted to agree. `register`: `QueryRegistry::register` into the
+head's registry; `registered`, or `refused` with the error's document. `validateParams`: `Query::validate_params` of the
+named declaration over `args`; `accept`, or `reject` with the error's document. `dispatch`: `QueryRegistry::dispatch`
+under the unit context with the `grant` (`Grant::of_invocation` of its identity text) or none, the resolver counting
+its runs; `performed` exactly when it ran once, else `refused` with the error's document and no run; `decide_named`
+is asserted to answer `Allow` exactly where the dispatch performed. A case the leg does not know fails it. The leg
+asserts its total against the family's row in `laws/manifest.json` (84) and the count of each case
+(`declarationRefused` 36, `admissionFault` 21, `register` 4, `validateParams` 14, `dispatch` 9).
+
+**D17.6 — `referenceOnly` names a model, not a host's duty; `unreached` names what no vector raises.** The file's
+`referenceOnly` names the vectors no extracted proof model answers (the four `admissionFault` vectors of a literal its
+column cannot carry, and the `dispatch` case whole: 13), with the reason; every other vector's `answeredBy` names the
+query model. It says which MODEL computed an answer, never whether a host must give one: the port answers all 84, those
+13 like the rest, and reads `answeredBy` nowhere. The leg asserts that `referenceOnly` names vectors the file holds and
+that they are 13, so a change to it is seen. `unreached` names the six cases of `QueryError` no vector raises
+(`unreadableArgs`, raised by the argument document's reader, which D14.3 did not port; `sourceNotResolved`,
+`executionFailed`, `timeout`, `predicateNotHonoured` and `orderNotHonoured`, raised by a host's resolver). The crate
+holds all six (D14.2); their wire spelling is `seamRefusals`', and the act of raising them is certified here no more
+than in the reference. The leg asserts each is a case the seam's `QUERY_ERROR` declares and that no vector expects one.
+
+**D17.7 — without `std`, beside the other query legs.** `tests/query_declaration.rs` runs in `run.ps1`'s
+`--no-default-features` stage with `capability`, `capability_gate`, `query_grant` and `query`, so the family is
+certified on the library as the embedded build builds it, on the host, at the floor and at stable in CI.
+`tests/families.rs` lists `laws/queryDeclarationLaws` as answered by `query_declaration`.
+
+**D17.8 — the version does not move.** No public item is added, removed or changed: the leg uses what D14 built. By
+D11.8's rule `0.0.5-alpha.1` stays. No crate release, tag or publish.
