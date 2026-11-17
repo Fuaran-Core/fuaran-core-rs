@@ -2,6 +2,7 @@
 name = "fuaran-core"
 version = "0.0.5-alpha.1"
 edition = "2024"
+# The minimum the gate runs at: CI's minimum job and run.ps1 read this line (DECISIONS.md D15). Edition 2024 needs 1.85.
 rust-version = "1.85"
 description = "The Fuaran Core spine in Rust: canonical JSON, the number form, content addresses, tree and op apply, the op-stream chain, the DAG with its reconcile and diff, and the columnar, capability (with its gate, decision context and grant, and the document value space), query (the declaration, its admission gate and the grant for a read, decided by the capability registry's own decision), propagation and seam contracts, certified against the reference's conformance vectors."
 license = "Apache-2.0"

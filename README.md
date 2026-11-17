@@ -62,6 +62,12 @@ declaration alone rather than of the registry that rendered its filter). One fun
 document; the same leg measures and reports it (D13.8). The crate requires `alloc` on every profile. This statement
 certifies against Core `a9592b7` (`0.43.0`, released); the crate's version is `0.0.5-alpha.1` (CHANGELOG.md).
 
+These claims are checked at two Rust versions: the minimum `Cargo.toml` declares (`rust-version = "1.85"`, which rustup
+resolves to 1.85.1) and stable, each by its own CI job. At both, the crate builds with every feature and without
+`std`, builds for `thumbv7em-none-eabihf`, and passes every conformance leg, every premise and every row of the
+allocation table, in debug and in release, hosted and without `std`. The format check and the lints run at stable only
+(DECISIONS.md D15).
+
 ## Build
 
 ```powershell
@@ -69,8 +75,12 @@ pwsh ./run.ps1
 ```
 
 `run.ps1` checks formatting, runs clippy, builds, runs the tests (the conformance legs among
-them, and the capability and query legs and the allocation leg a second time without `std`), and builds the `no_std` profile for
-`thumbv7em-none-eabihf` (Cortex-M4F).
+them, and the capability and query legs and the allocation leg a second time without `std`, the allocation leg in
+release too), and builds the `no_std` profile for `thumbv7em-none-eabihf` (Cortex-M4F). Then it runs the same build,
+tests and `no_std` build at the minimum Rust version `Cargo.toml` declares, when rustup has that toolchain installed;
+when it does not, the run says so, names the commands that install it, and stays green with the minimum reported as
+not run. `-MinimumOnly` runs only the minimum's legs and fails if the toolchain is missing; `-SkipMinimum` leaves them
+out.
 
 ## Verification
 

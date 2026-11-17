@@ -818,3 +818,75 @@ reader, the lenient read, the canonical text and its round trip, the `seamRefusa
 read inside a declaration, validation's refusals in order, the float payload's layout, the filter and the order in
 the identity, and the registry's decision, dispatch, `under` and `unregister`. `tests/families.rs` names `identity`
 (D14.7) and `encodingProfile` (D8) as the two families the crate does not answer.
+
+## D15 — 2026-11-17 — the declared minimum stays 1.85, and the gate runs at it: every leg that compiles and tests, while the format check and the lints are the newest tools'
+
+Phase 681. `Cargo.toml` has declared `rust-version = "1.85"` since D2, and nothing ran the crate at it: CI installed
+stable and `run.ps1` used whatever the machine's default was. The declaration was a claim nothing checked. This entry
+records what the crate does at 1.85, what the gate now runs there, and what it does not. No source file, no public
+item and nothing the crate certifies changed.
+
+**D15.1 — measured first, on the crate as it stood.** Two commits that changed the workflow only ran the whole gate
+in CI at the minimum read from the manifest (rustup resolves `1.85` to `rustc 1.85.1 (4eb161250 2025-03-15)`) beside
+stable (`rustc 1.100.0 (0ef1bc386 2026-11-09)`), on the crate at `f1dd15e`. At 1.85.1: `cargo fmt --check` passes;
+`cargo build --all-features` passes with no warning; `cargo test --all-features` passes in every binary (the
+conformance legs among them, against Core `a9592b7`); the premises in release, the capability and query legs without
+`std`, and the `thumbv7em-none-eabihf` build pass; the allocation table passes in debug and in release, hosted and
+without `std`. One leg fails: `cargo clippy --all-features --all-targets -- -D warnings` raises four lints the clippy
+of 1.100.0 does not raise on the same tree, `clippy::manual_flatten` at `src/capability.rs:1279` and
+`clippy::needless_lifetimes` at `src/capability.rs:1349`, `src/json.rs:317` and `src/seam.rs:643`. Nothing fails to
+compile and no answer differs.
+
+**D15.2 — the choice: keep 1.85; the format check and the lints run on stable only; every other leg runs at both.**
+A lint is the tool's opinion of the source, not a property of the library a host compiles: what 1.85 must answer is
+whether the crate builds there and answers every vector, every premise and every row of the allocation table as it
+does at stable, and it does. The format check and the lints run where the newest tools are, which is the stable job
+and a developer's default toolchain. Two alternatives lost:
+
+- *Fixing the four lints so clippy runs at both.* It would touch three source files, `src/json.rs` among them, whose
+  reader the Kani harnesses cover (`verification/README.md`), to satisfy a clippy that stable's no longer agrees
+  with. The two clippys disagree today in one direction; nothing stops them disagreeing in the other as lints are
+  added and retired, and a gate that runs two lint sets has to hold the source to the stricter of both at every
+  moment. The lints stay one tool's, at stable.
+- *Raising the minimum.* Edition 2024 needs 1.85, so 1.85 is the floor of what the manifest can declare; the crate
+  passes there on every leg that is about the library, so a raise would leave out every host on 1.85 up to the raised
+  version and buy nothing. No host is left out.
+
+**D15.3 — the minimum is read from the manifest, in both places.** CI's minimum job reads `rust-version` from
+`Cargo.toml` and installs that toolchain; `run.ps1` reads the same line. Neither names a version of its own, so moving
+the declaration moves both, and they cannot drift apart.
+
+**D15.4 — the local gate: it runs the minimum's legs when the toolchain is there, and names it missing when it is
+not.** With no arguments `run.ps1` runs the format check and the lints, the legs on the default toolchain, and then
+the same legs (build, tests, premises in release, the legs without `std`, the allocation table, the embedded build)
+again through rustup at the minimum (`cargo +<toolchain>`), the toolchain found among those `rustup toolchain list`
+names (`1.85`, or a patch of it). Nothing is installed from the script: it calls a toolchain only by a name rustup
+lists as installed, with `RUSTUP_AUTO_INSTALL=0`. When the minimum is not installed it prints
+`MISSING: the minimum Rust version Cargo.toml declares (1.85) is not installed, so its legs did not run.` with the two
+commands that install it and its embedded target, and ends `fuaran-core-rs: green (minimum 1.85: MISSING, its legs did
+not run)`: the run is green, and its last line says what it did not check. Every stage seeds `$LASTEXITCODE`, and the
+missing branch sets it, so a skipped stage never reads another's exit code. `-MinimumOnly` runs the minimum's legs
+alone and FAILS when the toolchain or its embedded target is missing; `-SkipMinimum` leaves them out by name. Lost:
+failing by default when the minimum is missing, with an opt-out, as a missing embedded target fails. The gate is
+`verify.ps1`, which passes no argument and runs on machines that hold one toolchain; failing there by default would
+make every such machine red for a leg CI runs anyway, or teach everyone to pass the opt-out. The evidence that the
+minimum's legs run is CI's minimum job, which calls `-MinimumOnly`, so a green minimum job is one whose legs ran.
+
+**D15.5 — CI: one matrix, two jobs.** `gate (stable)` installs stable with rustfmt and clippy and runs
+`run.ps1 -SkipMinimum`; `gate (minimum)` installs the manifest's minimum with its embedded target, no rustfmt and no
+clippy, and runs `run.ps1 -MinimumOnly`. The Core checkout at the pin, the side-by-side layout and the actions are
+unchanged.
+
+**D15.6 — the allocation table, in debug and in release, at both.** D12.10 says the table is held at zero "in debug
+and in release, held by the gate", but `run.ps1` ran `capability_alloc` in debug only (in `cargo test --all-features`
+and in the leg without `std`): release was measured when D12 was written and not held after. The gate now runs it
+without `std` in debug, and hosted and without `std` in release, each with `--nocapture` so the log carries every row,
+on the default toolchain and at the minimum; the hosted debug run stays in `cargo test --all-features`. At 1.85.1 every
+row the table asserts at zero is zero in all four: the fifteen rows of a capability's decision path and the ten of a
+read's. The rows the table reports without asserting zero read the same at 1.85.1 as at stable (building a registry 27
+allocations of 1,222 bytes, a document argument 11 of 858, a filtered read's identity asked of the declaration alone 56
+of 1,858). No row is relaxed or made conditional on the compiler. The leg without `std` is moved out of the combined
+capability and query run into its own stage, so it is not run twice.
+
+**D15.7 — the version does not move.** The declared minimum did not rise and no public item changed, so by D11.8's
+rule `0.0.5-alpha.1` stays. The pin does not move: Core `a9592b7` (`0.43.0`, released).
