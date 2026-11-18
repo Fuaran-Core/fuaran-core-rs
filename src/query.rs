@@ -43,6 +43,25 @@
 //!     AdmittedQuery { query: q }
 //! }
 //! ```
+//!
+//! A predicate is written only inside an admitted declaration's filter: its
+//! own writer is the crate's (D18.6). A predicate's parts are public,
+//!
+//! ```
+//! use fuaran_core::query::ColumnPredicate;
+//! fn parts(p: &ColumnPredicate) -> (&str, &str) {
+//!     (p.tag(), p.column())
+//! }
+//! ```
+//!
+//! and its document is not written from outside the crate:
+//!
+//! ```compile_fail,E0624
+//! use fuaran_core::query::ColumnPredicate;
+//! fn document(p: &ColumnPredicate) -> fuaran_core::json::JVal {
+//!     p.to_json()
+//! }
+//! ```
 
 use crate::capability::{
     EffectClass, Grant, Measured, PolicyDecision, PolicyGate, Unmatched, decide_granted, effect_of,

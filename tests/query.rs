@@ -768,6 +768,56 @@ fn registry() -> QueryRegistry<u8> {
     ))
 }
 
+/// Query.fs:599-618 at Core `889c869d` (`invokePageWithArgs`, Phase 685, the
+/// reference's D264.8 point 3): a resolver's `PredicateNotHonoured` reaches the
+/// caller only for a predicate of the declaration's own filter; any other is
+/// the resolver's fault, `ExecutionFailed` naming its tag and column, in the
+/// reference's words (Query.fs:610-614), with no recoverable argument. No
+/// vector reaches either arm (`unreached`), so both are pinned here (D18.7).
+#[test]
+fn the_dispatch_holds_a_resolvers_unhonoured_predicate_to_the_declarations_own() {
+    let r = registry();
+    let a = args(&[("n", Cell::Int(5))]);
+    let refuse = |p: ColumnPredicate| {
+        r.dispatch(&0, None, "sales", &a, |_| {
+            Err::<(), _>(QueryError::PredicateNotHonoured { predicate: p })
+        })
+    };
+    // The declaration's own predicate passes through.
+    assert_eq!(
+        refuse(eq("n", Cell::Int(2))),
+        Err(QueryError::PredicateNotHonoured {
+            predicate: eq("n", Cell::Int(2))
+        })
+    );
+    // Another literal on the same column, or another column, is the resolver's.
+    assert_eq!(
+        refuse(eq("n", Cell::Int(3))),
+        Err(QueryError::ExecutionFailed {
+            detail: "the resolver refused filter 'equalTo' on column 'n', which the declaration does not hold".to_string(),
+            recoverable: Vec::new(),
+        })
+    );
+    assert_eq!(
+        refuse(ColumnPredicate::IsNull {
+            column: "region".to_string()
+        }),
+        Err(QueryError::ExecutionFailed {
+            detail: "the resolver refused filter 'isNull' on column 'region', which the declaration does not hold".to_string(),
+            recoverable: Vec::new(),
+        })
+    );
+    // A read whose declaration declares no filter holds no predicate.
+    assert!(matches!(
+        r.dispatch(&0, None, "ledger", &a, |_| Err::<(), _>(
+            QueryError::PredicateNotHonoured {
+                predicate: eq("n", Cell::Int(2))
+            }
+        )),
+        Err(QueryError::ExecutionFailed { .. })
+    ));
+}
+
 /// QueryRegistry.fs:74-235: enumerate, the named decision under a context and a
 /// grant, dispatch from the same decision, `under`, `unregister`.
 #[test]

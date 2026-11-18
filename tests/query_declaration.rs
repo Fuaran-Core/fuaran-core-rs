@@ -290,9 +290,10 @@ fn projected(e: &QueryError) -> JVal {
         QueryError::DuplicateSortColumn { column } => {
             ("duplicateSortColumn", vec![("column", str(column))])
         }
-        QueryError::PredicateNotHonoured { predicate } => (
-            "predicateNotHonoured",
-            vec![("predicate", predicate.to_json())],
+        QueryError::PredicateNotHonoured { predicate } => panic!(
+            "predicateNotHonoured is raised by a host's resolver, which no vector reaches \
+             (unreached), and the crate writes a predicate only inside an admitted \
+             declaration (D18.6): {predicate:?}"
         ),
         QueryError::OrderNotHonoured { column } => {
             ("orderNotHonoured", vec![("column", str(column))])
