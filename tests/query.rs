@@ -1,9 +1,11 @@
-//! Port-side tests of the query declaration (DECISIONS.md D14, D17): what the
-//! reference's vectors do not reach. Since Core `bd1a339f` (`0.43.1`, draft) the
-//! family `queryDeclarationLaws` (tests/query_declaration.rs) pins the code, the
-//! path and the error value of every refusal of the declaration reader, the
+//! Port-side tests of the query declaration (DECISIONS.md D14, D17, D18): what
+//! the reference's vectors do not reach. Since Core `bd1a339f` (`0.43.1`, draft)
+//! the family `queryDeclarationLaws` (tests/query_declaration.rs) pins the code,
+//! the path and the error value of every refusal of the declaration reader, the
 //! admission gate, registration and validation, so those assertions retired from
-//! here (the table is D17.9). What stays is the port's own: each refusal's
+//! here (the table is D17.9); since Core `889c869d` (`0.44.0`, draft) it pins the
+//! reader's refusals D17.10 held and `-Infinity`'s reason too, and those retired
+//! as well (D18.8). What stays is the port's own: each refusal's
 //! sentence (`QueryError::describe`, and the reader's message carrying it), which
 //! no vector pins, and the few codes, paths and values no vector reaches, each
 //! test citing the reference's file and line under `src/Fuaran.Core.Query/`
@@ -89,15 +91,6 @@ fn key(column: &str, direction: SortDirection) -> SortKey {
         column: column.to_string(),
         direction,
     }
-}
-
-fn path(segs: &[&str]) -> Vec<PathSeg> {
-    segs.iter()
-        .map(|s| match s.parse::<usize>() {
-            Ok(i) => PathSeg::Index(i),
-            Err(_) => PathSeg::Key(s.to_string()),
-        })
-        .collect()
 }
 
 /// The sentence of the gate's refusal of `q`: what the port says of it, which no
@@ -265,24 +258,11 @@ fn a_timestamp_literal_fits_a_column_at_least_as_fine_and_no_finer() {
 }
 
 /// Query.fs:45-67 (`literalReason`, `literalFault`); Column.fs:531, 850. A
-/// literal of its column's type that the column cannot carry; the reader
-/// reads a literal through the column codec, which refuses each of these first,
-/// so they are reached by declarations built by hand.
+/// literal of its column's type that the column cannot carry: the sentence. The
+/// refusal and its reason are the family's, `-Infinity`'s among them since Core
+/// `889c869d` (`admission-a-float-negative-infinity`, D18.8).
 #[test]
 fn a_literal_its_column_cannot_carry_is_ill_formed_with_the_column_layers_reason() {
-    let reason = |q: Query| match q.admission_fault() {
-        Some(QueryError::IllFormedLiteral { column, reason }) => (column, reason),
-        other => panic!("not an ill-formed literal: {other:?}"),
-    };
-    // The family pins `NaN` (`admission-a-float-not-finite`); the reason names the
-    // token, so the other non-finite float's is the port's to pin.
-    assert_eq!(
-        reason(with_filter(eq("score", Cell::Float(f64::NEG_INFINITY)))),
-        (
-            "score".to_string(),
-            "the float -Infinity is not finite, and the wire has no non-finite float".to_string()
-        )
-    );
     says(
         &with_filter(eq("day", Cell::Date("2026-02-30".to_string()))),
         "Refused: the filter on column 'day' compares with a value the column cannot carry: day: a date cell must carry a canonical ISO-8601 date, YYYY-MM-DD, naming a day that exists.",
@@ -403,26 +383,6 @@ fn edited_to(members: &[(&str, &str)]) -> String {
 fn refusal(text: &str) -> (DecodeCode, Vec<PathSeg>) {
     let e = AdmittedQuery::decode(text).expect_err("the reader refuses");
     (e.code, e.path)
-}
-
-/// QueryCodec.fs:147-176: the reader's refusals no `declarationRefused` vector
-/// reaches, on code and path. Every other member's refusal, the reader's order
-/// and a document that is not an object are the family's (D17.9).
-#[test]
-fn the_reader_refuses_the_members_no_vector_reaches() {
-    use DecodeCode::*;
-    let cases: &[(&str, Option<&str>, DecodeCode, &[&str])] = &[
-        ("params", None, MissingField, &["params"]),
-        ("resultSchema", Some("1"), WrongKind, &["resultSchema"]),
-        ("effect", None, MissingField, &["effect"]),
-    ];
-    for (member, value, code, at) in cases {
-        assert_eq!(
-            refusal(&edited(member, *value)),
-            (*code, path(at)),
-            "{member} = {value:?}"
-        );
-    }
 }
 
 /// QueryTypes.fs:118-138 (`PositiveInt`), QueryCodec.fs:75-83 (`budgetJson`,
