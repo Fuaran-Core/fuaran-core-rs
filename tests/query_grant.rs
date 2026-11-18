@@ -25,7 +25,7 @@ use common::*;
 use fuaran_core::capability::{Grant, PolicyDecision, PolicyGate};
 use fuaran_core::column::Cell;
 use fuaran_core::json::{JVal, render_canonical};
-use fuaran_core::query::{Query, QueryRegistry};
+use fuaran_core::query::{AdmittedQuery, Query, QueryRegistry};
 
 const FILE: &str = "laws/query-grant-laws.json";
 const CASES: [&str; 2] = ["invocationIdentity", "grantCovers"];
@@ -36,22 +36,23 @@ fn doc() -> JVal {
     d
 }
 
-/// The head's queries, each read through the declaration reader and asserted
-/// to write back the canonical bytes it was read from.
-fn queries(d: &JVal) -> Vec<Query> {
+/// The head's queries, each read through the declaration reader, which answers
+/// an admitted declaration (D18.3), and asserted to write back the canonical
+/// bytes it was read from.
+fn queries(d: &JVal) -> Vec<AdmittedQuery> {
     arr(d, "registry")
         .iter()
         .map(|t| {
             let JVal::Str(text) = t else {
                 panic!("a registry entry is not a string: {t:?}")
             };
-            let q = Query::decode(text)
+            let q = AdmittedQuery::decode(text)
                 .unwrap_or_else(|e| panic!("the head's declaration is refused: {e:?}\n{text}"));
             assert_eq!(
                 &q.encode(),
                 text,
                 "{}: the declaration's canonical text",
-                q.id
+                q.declaration().id
             );
             q
         })
@@ -67,9 +68,10 @@ fn grant_of(input: &JVal) -> Option<Grant> {
 
 /// The registry of the head's queries under one gate that asks for an approval
 /// of every read.
-fn registry_of(qs: &[Query]) -> QueryRegistry {
+fn registry_of(qs: &[AdmittedQuery]) -> QueryRegistry {
     let mut r = QueryRegistry::new();
     for q in qs {
+        let q = q.declaration();
         r = r
             .register(q.clone())
             .unwrap_or_else(|e| panic!("{}: refused at register: {e:?}", q.id));
@@ -82,19 +84,19 @@ fn registry_of(qs: &[Query]) -> QueryRegistry {
 
 /// The identity as a decision writes it: through a writer, building nothing but
 /// the string it is written into here.
-fn written_identity(q: &Query, args: &[(String, Cell)]) -> String {
+fn written_identity(q: &AdmittedQuery, args: &[(String, Cell)]) -> String {
     let mut out = String::new();
     q.write_invocation_identity(args, &mut out)
         .expect("a String accepts every write");
     out
 }
 
-fn answer(qs: &[Query], r: &QueryRegistry, v: &JVal) -> JVal {
+fn answer(qs: &[AdmittedQuery], r: &QueryRegistry, v: &JVal) -> JVal {
     let input = get(v, "input");
     let id = s(input, "query");
     let q = qs
         .iter()
-        .find(|q| q.id == id)
+        .find(|q| q.declaration().id == id)
         .unwrap_or_else(|| panic!("{}: no query {id} in the head", s(v, "id")));
     let args = args_of(input);
     match s(v, "case") {

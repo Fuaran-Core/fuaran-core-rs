@@ -23,7 +23,8 @@ use fuaran_core::column::{Cell, ColumnType};
 use fuaran_core::decode::{self, DecodeError};
 use fuaran_core::json::{JVal, JsonLimits, PathSeg, render_canonical};
 use fuaran_core::query::{
-    ColumnPredicate, Query, QueryError, QueryParam, QueryRegistry, SortDirection, SortKey,
+    AdmittedQuery, ColumnPredicate, Query, QueryError, QueryParam, QueryRegistry, SortDirection,
+    SortKey,
 };
 use fuaran_core::seam::{self, Reading, Slot};
 
@@ -42,21 +43,22 @@ fn doc() -> JVal {
     d
 }
 
-/// The head's declarations, each read through the declaration reader and
-/// asserted to write back the canonical bytes it was read from.
+/// The head's declarations, each read through the declaration reader (which
+/// answers an admitted declaration, D18.3) and asserted to write back the
+/// canonical bytes it was read from.
 fn queries(d: &JVal) -> Vec<Query> {
     str_items(d, "registry")
         .iter()
         .map(|text| {
-            let q = Query::decode(text)
+            let q = AdmittedQuery::decode(text)
                 .unwrap_or_else(|e| panic!("the head's declaration is refused: {e:?}\n{text}"));
             assert_eq!(
                 &q.encode(),
                 text,
                 "{}: the declaration's canonical text",
-                q.id
+                q.declaration().id
             );
-            q
+            q.into_declaration()
         })
         .collect()
 }
@@ -356,9 +358,13 @@ fn answer(qs: &[Query], r: &QueryRegistry, v: &JVal) -> JVal {
     let id = s(v, "id");
     let input = get(v, "input");
     let members = match s(v, "case") {
-        "declarationRefused" => match Query::decode(s(input, "declaration")) {
+        "declarationRefused" => match AdmittedQuery::decode(s(input, "declaration")) {
             Ok(q) => {
-                assert_eq!(q.admission_fault(), None, "{id}: read, so admitted");
+                assert_eq!(
+                    q.declaration().admission_fault(),
+                    None,
+                    "{id}: read, so admitted"
+                );
                 vec![verdict("accept")]
             }
             Err(e) => reader_refusal(&e),

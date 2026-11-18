@@ -26,7 +26,7 @@ use fuaran_core::capability::{
     Capability, CapabilityRegistry, InvokeError, PolicyDecision, PolicyGate,
 };
 use fuaran_core::column::Cell as QCell;
-use fuaran_core::query::{Query, QueryError, QueryRegistry};
+use fuaran_core::query::{AdmittedQuery, Query, QueryError, QueryRegistry};
 
 // ─── The counting allocator ──────────────────────────────────────────────────
 
@@ -426,8 +426,12 @@ fn query_registry() -> QueryRegistry<u8> {
     [LEDGER, SHAPED]
         .iter()
         .fold(QueryRegistry::empty(), |r, text| {
-            r.register(Query::decode(text).expect("a declaration"))
-                .expect("admitted")
+            r.register(
+                AdmittedQuery::decode(text)
+                    .expect("a declaration")
+                    .into_declaration(),
+            )
+            .expect("admitted")
         })
         .with_gate(PolicyGate::new(
             "reads",
@@ -462,7 +466,7 @@ fn a_reads_decision_allocates_nothing_once_the_registry_is_built() {
 
     let mut table: Vec<(&str, (usize, usize))> = Vec::new();
 
-    let (n, d) = measure(|| ledger.validate_params(&args));
+    let (n, d) = measure(|| ledger.declaration().validate_params(&args));
     assert_eq!(d, Ok(()));
     table.push(("read: validate_params, one binding", n));
 

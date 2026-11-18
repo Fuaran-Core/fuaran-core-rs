@@ -19,7 +19,28 @@
 //!   function decides at both registries (D14.6).
 //!
 //! Each is the twin of the reference's `Fuaran.Core.Query` (`QueryTypes`,
-//! `Query`, `QueryCodec`, `QueryRegistry`), certified against `queryGrantLaws`.
+//! `Query`, `QueryCodec`, `QueryRegistry`), certified against `queryGrantLaws`
+//! and `queryDeclarationLaws`.
+//!
+//! An [`AdmittedQuery`] is made only by the gate ([`Query::admit`]), so no
+//! declaration the gate refuses is written, keyed or granted (DECISIONS.md D18):
+//!
+//! ```
+//! use fuaran_core::query::{AdmittedQuery, Query};
+//! fn admit(q: Query) -> Option<AdmittedQuery> {
+//!     q.admit().ok()
+//! }
+//! ```
+//!
+//! and built any other way from outside the crate, it is refused at compile
+//! time (its field is private):
+//!
+//! ```compile_fail,E0451
+//! use fuaran_core::query::{AdmittedQuery, Query};
+//! fn forge(q: Query) -> AdmittedQuery {
+//!     AdmittedQuery { query: q }
+//! }
+//! ```
 
 use crate::capability::{
     EffectClass, Grant, Measured, PolicyDecision, PolicyGate, Unmatched, decide_granted, effect_of,

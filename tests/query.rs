@@ -25,7 +25,8 @@ use fuaran_core::decode::DecodeCode;
 use fuaran_core::field::Field;
 use fuaran_core::json::{JVal, PathSeg, render_canonical};
 use fuaran_core::query::{
-    ColumnPredicate, Query, QueryError, QueryParam, QueryRegistry, SortDirection, SortKey,
+    AdmittedQuery, ColumnPredicate, Query, QueryError, QueryParam, QueryRegistry, SortDirection,
+    SortKey,
 };
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -106,11 +107,18 @@ fn says(q: &Query, sentence: &str) {
     assert_eq!(e.describe(), sentence);
 }
 
-/// The declaration reader over the declaration's own text (when its text can
-/// carry it) refuses with the registry's sentence; its code and path are the
-/// family's (`declarationRefused`).
-fn refused_on_read(q: &Query, sentence: &str) {
-    let e = Query::decode(&q.encode()).expect_err("the reader refuses");
+/// The declaration the gate admitted: what the writer, the identity and the
+/// grant take (D18.2).
+fn admitted(q: Query) -> AdmittedQuery {
+    q.admit().expect("the gate admits the declaration")
+}
+
+/// The declaration reader over `text` refuses with the registry's sentence; its
+/// code and path are the family's (`declarationRefused`). No writer takes a
+/// declaration the gate refuses (D18.2), so the text of a refused declaration
+/// is an admitted declaration's text with members replaced ([`edited_to`]).
+fn refused_on_read(text: &str, sentence: &str) {
+    let e = AdmittedQuery::decode(text).expect_err("the reader refuses");
     assert_eq!(
         e.message,
         format!("a declaration the registry admits: {sentence}")
@@ -130,7 +138,16 @@ fn a_parameter_declared_twice_is_refused_at_params() {
     }];
     let sentence = "Refused: parameter 'rate' is given more than once. Give each parameter once.";
     says(&q, sentence);
-    refused_on_read(&q, sentence);
+    refused_on_read(
+        &edited_to(&[
+            (
+                "params",
+                r#"[{"name":"n","required":true,"type":"int"},{"name":"rate","required":false,"type":"float"},{"name":"tag","required":false,"type":"string"},{"name":"rate","required":false,"type":"string"}]"#,
+            ),
+            ("where", r#"[{"$type":"isNull","column":"nope"}]"#),
+        ]),
+        sentence,
+    );
 }
 
 /// Query.fs:76-77, 232-241.
@@ -151,7 +168,13 @@ fn a_predicate_on_an_undeclared_column_is_refused_naming_the_columns() {
         "Refused: 'nope' is not a column of this query's result. Its columns are {COLUMNS}."
     );
     says(&q, &sentence);
-    refused_on_read(&q, &sentence);
+    refused_on_read(
+        &edited_to(&[(
+            "where",
+            r#"[{"$type":"isNotNull","column":"n"},{"$type":"isNull","column":"nope"}]"#,
+        )]),
+        &sentence,
+    );
     // A result with no columns says so.
     let bare = Query {
         result_schema: Vec::new(),
@@ -172,7 +195,10 @@ fn contains_on_a_column_that_is_not_a_string_is_not_applicable() {
     });
     let sentence = "Refused: the filter 'contains' does not apply to column 'n', which is int. It applies to string columns only.";
     says(&q, sentence);
-    refused_on_read(&q, sentence);
+    refused_on_read(
+        &edited_to(&[("where", r#"[{"$type":"contains","column":"n","text":"1"}]"#)]),
+        sentence,
+    );
 }
 
 /// Query.fs:83-84, 259-264. A declaration's text cannot carry a `null` literal:
@@ -192,12 +218,24 @@ fn a_literal_of_another_type_is_a_type_mismatch_saying_how_to_write_one() {
     let q = with_filter(eq("n", Cell::Str("5".to_string())));
     let sentence = "Refused: the filter on column 'n' compares with a string value; the column is int, and a filter compares with a value of the column's own type.";
     says(&q, sentence);
-    refused_on_read(&q, sentence);
+    refused_on_read(
+        &edited_to(&[(
+            "where",
+            r#"[{"$type":"equalTo","column":"n","type":"string","value":"5"}]"#,
+        )]),
+        sentence,
+    );
     // An integer literal on a decimal column says how to write a decimal.
     let q = with_filter(eq("amount", Cell::Int(5)));
     let sentence = "Refused: the filter on column 'amount' compares with a int value; the column is decimal, and a filter compares with a value of the column's own type. Write a decimal as a JSON string of decimal text, such as \"12.50\": an optional '-', digits, and an optional '.' followed by digits; never as a JSON number.";
     says(&q, sentence);
-    refused_on_read(&q, sentence);
+    refused_on_read(
+        &edited_to(&[(
+            "where",
+            r#"[{"$type":"equalTo","column":"amount","type":"int","value":5}]"#,
+        )]),
+        sentence,
+    );
 }
 
 /// Query.fs:86-93 (Phase 422), 146-158.
@@ -205,11 +243,11 @@ fn a_literal_of_another_type_is_a_type_mismatch_saying_how_to_write_one() {
 fn a_timestamp_literal_fits_a_column_at_least_as_fine_and_no_finer() {
     // A whole second is a `timestamp` cell, fits a millisecond column, and its
     // declaration reads back to itself.
-    let coarse = with_filter(eq(
+    let coarse = admitted(with_filter(eq(
         "at",
         Cell::Timestamp("2026-11-15T09:30:00Z".to_string()),
-    ));
-    assert_eq!(Query::decode(&coarse.encode()).unwrap(), coarse);
+    )));
+    assert_eq!(AdmittedQuery::decode(&coarse.encode()).unwrap(), coarse);
     // Microseconds do not.
     let fine = with_filter(eq(
         "at",
@@ -217,7 +255,13 @@ fn a_timestamp_literal_fits_a_column_at_least_as_fine_and_no_finer() {
     ));
     let sentence = "Refused: the filter on column 'at' compares with a timestamp_us value; the column is timestamp_ms, and a filter compares with a value of the column's own type. Write a timestamp as a JSON string, YYYY-MM-DDThh:mm:ssZ, or YYYY-MM-DDThh:mm:ss.FZ with up to 3 fraction digits and no trailing zero.";
     says(&fine, sentence);
-    refused_on_read(&fine, sentence);
+    refused_on_read(
+        &edited_to(&[(
+            "where",
+            r#"[{"$type":"equalTo","column":"at","type":"timestamp_us","value":"2026-11-15T09:30:00.123456Z"}]"#,
+        )]),
+        sentence,
+    );
 }
 
 /// Query.fs:45-67 (`literalReason`, `literalFault`); Column.fs:531, 850. A
@@ -256,7 +300,10 @@ fn an_order_names_declared_columns_each_once() {
         "Refused: 'nope' is not a column of this query's result. Its columns are {COLUMNS}."
     );
     says(&unknown, &sentence);
-    refused_on_read(&unknown, &sentence);
+    refused_on_read(
+        &edited_to(&[("orderBy", r#"[{"column":"nope","direction":"ascending"}]"#)]),
+        &sentence,
+    );
     let twice = Query {
         order_by: vec![
             key("n", SortDirection::Descending),
@@ -267,7 +314,13 @@ fn an_order_names_declared_columns_each_once() {
     };
     let sentence = "Refused: the order names column 'n' more than once. Name each column once.";
     says(&twice, sentence);
-    refused_on_read(&twice, sentence);
+    refused_on_read(
+        &edited_to(&[(
+            "orderBy",
+            r#"[{"column":"n","direction":"descending"},{"column":"region","direction":"ascending"},{"column":"n","direction":"ascending"}]"#,
+        )]),
+        sentence,
+    );
 }
 
 /// Query.fs:171; QueryRegistry.fs:82-84 (`Seam.register`: the id first).
@@ -282,11 +335,45 @@ fn a_held_id_is_refused_before_the_declaration_is_admitted() {
     );
 }
 
+// ─── The admitted declaration (D18.2, D18.3) ────────────────────────────────
+
+/// QueryRegistry.fs:58-70 (`admitAt`, `admit`), 105-110 (`tryFind`,
+/// `enumerate`): the gate answers the admitted declaration or the refusal
+/// `admission_fault` names, and only an admitted declaration is written, keyed
+/// or granted. A `Null` literal, which the writer once wrote as the empty
+/// string a string column reads back as another filter, is refused before
+/// anything can write or key it; the empty string itself is admitted.
+#[test]
+fn only_the_gate_admits_a_declaration_and_only_an_admitted_one_is_written() {
+    let null = with_filter(eq("region", Cell::Null));
+    let empty = with_filter(eq("region", Cell::Str(String::new())));
+    assert_eq!(
+        null.clone().admit().unwrap_err(),
+        null.admission_fault().unwrap()
+    );
+    assert_eq!(
+        QueryRegistry::new().register(null.clone()).unwrap_err(),
+        null.admission_fault().unwrap()
+    );
+    let a = admitted(empty.clone());
+    assert_eq!(a.declaration(), &empty);
+    assert_eq!(a.clone().into_declaration(), empty);
+    // Two admissions of one declaration are equal, and its text reads back as it.
+    assert_eq!(a, admitted(empty.clone()));
+    assert_eq!(AdmittedQuery::decode(&a.encode()).unwrap(), a);
+    // The registry answers what its gate admitted.
+    let r = QueryRegistry::new().register(empty).unwrap();
+    assert_eq!(r.try_find("sales"), Some(&a));
+    assert_eq!(r.enumerate(), std::slice::from_ref(&a));
+    assert_eq!(r.try_find("nope"), None);
+}
+
 // ─── The declaration reader (QueryCodec.fs:144-192) ─────────────────────────
 
-/// A declaration's text with `member` set to `value` (or removed, for `None`).
+/// The admitted `sales` declaration's text with `member` set to `value` (or
+/// removed, for `None`).
 fn edited(member: &str, value: Option<&str>) -> String {
-    let mut doc = sales().encode_json();
+    let mut doc = admitted(sales()).encode_json();
     let JVal::Obj(fields) = &mut doc else {
         unreachable!()
     };
@@ -297,8 +384,24 @@ fn edited(member: &str, value: Option<&str>) -> String {
     render_canonical(&doc)
 }
 
+/// The admitted `sales` declaration's text with each member set to its value:
+/// how a test writes a declaration the gate refuses, which no writer takes.
+fn edited_to(members: &[(&str, &str)]) -> String {
+    members
+        .iter()
+        .fold(admitted(sales()).encode(), |text, (member, value)| {
+            let mut doc = fuaran_core::json::parse(&text).unwrap();
+            let JVal::Obj(fields) = &mut doc else {
+                unreachable!()
+            };
+            fields.retain(|(k, _)| k != member);
+            fields.push((member.to_string(), fuaran_core::json::parse(value).unwrap()));
+            render_canonical(&doc)
+        })
+}
+
 fn refusal(text: &str) -> (DecodeCode, Vec<PathSeg>) {
-    let e = Query::decode(text).expect_err("the reader refuses");
+    let e = AdmittedQuery::decode(text).expect_err("the reader refuses");
     (e.code, e.path)
 }
 
@@ -327,7 +430,7 @@ fn the_reader_refuses_the_members_no_vector_reaches() {
 #[test]
 fn an_unknown_member_is_read_past() {
     let text = edited("note", Some("\"anything\""));
-    assert_eq!(Query::decode(&text).unwrap(), sales());
+    assert_eq!(AdmittedQuery::decode(&text).unwrap(), admitted(sales()));
 }
 
 /// QueryCodec.fs:69-91 (`queryJson`): every member, written canonically, read
@@ -372,6 +475,7 @@ fn a_declaration_writes_its_canonical_text_and_reads_back_to_itself() {
         ],
         ..sales()
     };
+    let q = admitted(q);
     let text = q.encode();
     assert_eq!(
         text,
@@ -387,10 +491,10 @@ fn a_declaration_writes_its_canonical_text_and_reads_back_to_itself() {
             r#"{"$type":"isNull","column":"day"},{"$type":"isNotNull","column":"n"}]}"#
         )
     );
-    assert_eq!(Query::decode(&text).unwrap(), q);
+    assert_eq!(AdmittedQuery::decode(&text).unwrap(), q);
     // Absent and empty members are not written.
-    assert!(!sales().encode().contains("where"));
-    assert!(!sales().encode().contains("timeoutMs"));
+    assert!(!admitted(sales()).encode().contains("where"));
+    assert!(!admitted(sales()).encode().contains("timeoutMs"));
 }
 
 /// The reader reads a literal through the column codec at the type its document
@@ -405,9 +509,9 @@ fn a_literal_is_read_as_the_cell_its_stated_type_reads() {
               {\"$type\":\"equalTo\",\"column\":\"amount\",\"type\":\"decimal\",\"value\":\"12.50\"}]",
         ),
     );
-    let q = Query::decode(&text).unwrap();
+    let q = AdmittedQuery::decode(&text).unwrap();
     assert_eq!(
-        q.filter,
+        q.declaration().filter,
         vec![
             eq("score", Cell::Float(2.0)),
             eq("amount", Cell::Decimal("12.5".to_string())),
@@ -450,9 +554,10 @@ fn the_seam_vectors_for_a_predicate_and_an_order_key_hold_inside_a_declaration()
         });
         match v.field("canonical") {
             Some(JVal::Str(canonical)) => {
-                let q = Query::decode(&text).unwrap_or_else(|e| panic!("{}: {e:?}", s(v, "name")));
+                let q = AdmittedQuery::decode(&text)
+                    .unwrap_or_else(|e| panic!("{}: {e:?}", s(v, "name")));
                 assert_eq!(
-                    render_canonical(&q.order_by[0].to_json()),
+                    render_canonical(&q.declaration().order_by[0].to_json()),
                     *canonical,
                     "{}",
                     s(v, "name")
@@ -559,7 +664,7 @@ fn a_type_mismatch_says_how_to_write_a_decimal_a_date_or_a_timestamp() {
 /// quoted token; equal names keep their list order.
 #[test]
 fn a_floats_payload_is_its_canonical_layout() {
-    let q = sales();
+    let q = admitted(sales());
     let id = |c: Cell| q.invocation_identity(&args(&[("rate", c)]));
     assert_eq!(id(Cell::Float(-0.0)), "sales\u{1}rate\u{1}f\u{1}0\u{1}");
     assert_eq!(
@@ -590,12 +695,12 @@ fn a_floats_payload_is_its_canonical_layout() {
 /// declarations under one id that filter differently mint two identities.
 #[test]
 fn the_filter_and_the_order_are_in_the_identity() {
-    let plain = sales();
-    let filtered = with_filter(eq("n", Cell::Int(2)));
-    let ordered = Query {
+    let plain = admitted(sales());
+    let filtered = admitted(with_filter(eq("n", Cell::Int(2))));
+    let ordered = admitted(Query {
         order_by: vec![key("n", SortDirection::Ascending)],
         ..sales()
-    };
+    });
     let a = args(&[("n", Cell::Int(5))]);
     let ids = [
         plain.invocation_identity(&a),
