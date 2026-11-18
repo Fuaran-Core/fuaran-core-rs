@@ -7,7 +7,8 @@
 //! JSON string, read through the declaration reader and asserted to write back
 //! the bytes it was read from) under the head's gate table (`gates`). A
 //! declaration an `admissionFault` or `register` vector states as DATA is built as
-//! the typed value from that data, never read from text (D17.2). Every refusal
+//! the typed value from that data, never read from text (D17.2), its `source` a
+//! table built as stated, a repeated name held twice (D19.5). Every refusal
 //! outside the reader is compared as its query-error document through the seam
 //! codec, never as a sentence (D17.4). The family's size is its row in
 //! `laws/manifest.json`, and the leg asserts the count of each case it ran.
@@ -19,8 +20,9 @@ use std::sync::Arc;
 
 use common::*;
 use fuaran_core::capability::{Grant, PolicyDecision, PolicyGate};
-use fuaran_core::column::{Cell, ColumnType};
+use fuaran_core::column::{Cell, Column, ColumnType, DataSource, Table};
 use fuaran_core::decode::{self, DecodeError};
+use fuaran_core::field::Field;
 use fuaran_core::json::{JVal, JsonLimits, PathSeg, render_canonical};
 use fuaran_core::query::{
     AdmittedQuery, ColumnPredicate, Query, QueryError, QueryParam, QueryRegistry, SortDirection,
@@ -176,7 +178,32 @@ fn stated(qs: &[Query], v: &JVal) -> Query {
     if input.field("orderBy").is_some() {
         q.order_by = arr(input, "orderBy").iter().map(sort_key_of).collect();
     }
+    if input.field("source").is_some() {
+        q.source = DataSource::Embedded(table_of(get(input, "source")));
+    }
     q
+}
+
+/// An embedded table as the file states it (DECISIONS.md D19.5): `schema` a
+/// list of `{name, type}` and `columns` a list of `{name, type, cells}`, each
+/// column held as stated by its type's builder. Both are lists, so a name may
+/// repeat in either, and the table is built as stated, never validated here.
+fn table_of(source: &JVal) -> Table {
+    Table {
+        schema: arr(source, "schema")
+            .iter()
+            .map(|f| Field::create(s(f, "name"), column_type(s(f, "type"))))
+            .collect(),
+        columns: arr(source, "columns")
+            .iter()
+            .map(|c| {
+                let name = s(c, "name");
+                let cells: Vec<Cell> = arr(c, "cells").iter().map(cell_of).collect();
+                Column::of_cells(name, column_type(s(c, "type")), &cells)
+                    .unwrap_or_else(|e| panic!("column '{name}': the builder refuses it: {e:?}"))
+            })
+            .collect(),
+    }
 }
 
 // ─── A refusal as its query-error document (D17.4) ───────────────────────────
@@ -485,7 +512,7 @@ fn every_vector_of_the_family() {
     assert_eq!(total, declared("laws", "queryDeclarationLaws"));
     assert_eq!(
         counts,
-        [46, 24, 4, 14, 9],
+        [46, 34, 4, 14, 9],
         "the vectors of each case, in {CASES:?}"
     );
     assert!(
