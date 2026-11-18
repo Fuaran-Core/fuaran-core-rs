@@ -475,7 +475,7 @@ fn every_vector_of_the_family() {
     assert_eq!(total, declared("laws", "queryDeclarationLaws"));
     assert_eq!(
         counts,
-        [36, 21, 4, 14, 9],
+        [46, 24, 4, 14, 9],
         "the vectors of each case, in {CASES:?}"
     );
     assert!(
@@ -489,7 +489,7 @@ fn every_vector_of_the_family() {
 
 /// `referenceOnly` names which MODEL answers, not whether a host must: the
 /// port answers those vectors like every other (D17.6). It names vectors the
-/// file holds, 13 of them.
+/// file holds, 16 of them.
 #[test]
 fn reference_only_names_vectors_the_file_holds() {
     let d = doc();
@@ -517,7 +517,7 @@ fn reference_only_names_vectors_the_file_holds() {
             }
         }
     }
-    assert_eq!(named.len(), 13, "{named:?}");
+    assert_eq!(named.len(), 16, "{named:?}");
 }
 
 /// `unreached` names cases of the seam's `QueryError` that no vector raises
