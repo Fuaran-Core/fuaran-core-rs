@@ -164,7 +164,10 @@ impl ColumnPredicate {
     /// The predicate's document (`QuerySeamCodec.encodeColumnPredicate`): its
     /// `$type`, its `column`, and a comparison's literal as its `type` (the cell's
     /// own) and `value` (`QueryWire.comparedMembers`), `contains` its `text`.
-    pub fn to_json(&self) -> JVal {
+    /// The crate's own: it writes an admitted declaration's filter, for the
+    /// declaration's writer and the read's identity, and nothing else, so no
+    /// literal the gate refuses is given a spelling (DECISIONS.md D18.6).
+    pub(crate) fn to_json(&self) -> JVal {
         let mut fields = vec![
             ("$type".to_string(), JVal::Str(self.tag().to_string())),
             ("column".to_string(), JVal::Str(self.column().to_string())),
@@ -1415,8 +1418,11 @@ impl<C> QueryRegistry<C> {
     /// presented; a `NeedsApproval` is `QueryApprovalRequired` unless `grant` is
     /// for exactly this read), and only then hand the resolved query to
     /// `resolve`, the host's resolver, exactly once; its refusal is the
-    /// dispatch's. A refused dispatch never runs it. Twin of
-    /// `QueryRegistry.dispatch`.
+    /// dispatch's, but for a `PredicateNotHonoured` naming a predicate the
+    /// declaration's filter does not hold, which is the resolver's fault,
+    /// `ExecutionFailed` naming that predicate's tag and column (DECISIONS.md
+    /// D18.7). A refused dispatch never runs it. Twin of `QueryRegistry.dispatch`
+    /// over `Query.invokePageWithArgs`.
     pub fn dispatch<T>(
         &self,
         ctx: &C,
@@ -1429,7 +1435,19 @@ impl<C> QueryRegistry<C> {
         // Only a deciding gate refuses, so a refusal always has one to name.
         let policy = || gate.map_or_else(|| Arc::from(""), |g| Arc::clone(&g.policy));
         match decision {
-            PolicyDecision::Allow => resolve(q),
+            PolicyDecision::Allow => resolve(q).map_err(|e| match e {
+                QueryError::PredicateNotHonoured { predicate } if !q.filter.contains(&predicate) => {
+                    QueryError::ExecutionFailed {
+                        detail: format!(
+                            "the resolver refused filter '{}' on column '{}', which the declaration does not hold",
+                            predicate.tag(),
+                            predicate.column()
+                        ),
+                        recoverable: Vec::new(),
+                    }
+                }
+                other => other,
+            }),
             PolicyDecision::NeedsApproval => {
                 Err(QueryError::QueryApprovalRequired { policy: policy() })
             }
