@@ -1258,3 +1258,135 @@ tag and column), which is what shows the failure is the field's or the method's 
 `compile_fail` could not be red before the type existed; its pair was (`E0432`, `E0599`). And the budget test's first
 form expected the written text to carry `"timeoutMs":1,`, where `timeoutMs` is the last member; it was corrected in the
 commit that built the budgets.
+
+## D19 — 2026-11-18 — the admission gate reads a declaration's embedded table: a table `Table::validate` refuses is refused `IllFormedSource` at `source`, before the parameters, and an admitted declaration reads back equal up to the column codec's normal form
+
+Phase 693. Core's Phase 688 (the reference's D266, ruled in D266.9 and designed in D266.10, at Core `66ff009e`, `0.44.0`,
+a draft) made the reference's admission gate read a declaration's source. Its census found that a gate that does not
+read the source admits declarations whose embedded table the column codec refuses, and that the writer then writes
+text the reader refuses or reads back as another declaration (a column dropped or added, a type or a decimal changed).
+The crate's gate was the reference's twin: D18.2 recorded that it did not read the source, and that the crate built
+nothing for it while Core had not ruled. The reference ruled: a new case `IllFormedSource of reason: string`, raised at
+`source` with the column layer's sentence for `Table.validate`'s refusal, checked FIRST, before the parameters; a `Ref`
+is not read; and "reads back as the same declaration" means equal up to the column codec's normal form (D266's (E2)).
+This entry decides how each item is built in the crate's idiom, before any of it is built, and records what lost. It
+replaces D18.2's last point.
+
+**D19.1 — the pin, and what it measured.** `core-pin.json` moves from `889c869d` to
+`66ff009ee306b20206d4427a874084e38721f3d0`, a commit on Core's `main` inside its open `0.44.0` slot. No tag names it: it is
+a draft, not a release, and the pin's `reason` and the README say so. Measured first, with the pin moved alone: between
+the two commits four files under `conformance/` differ, `laws/query-declaration-laws.json` and its manifest row (97
+vectors to 107) and `refusals/seam-refusals.json` and its manifest row (142 to 143); every other vector file and row the
+crate reads is byte for byte the same (both commits are inside the `0.44.0` slot, so not even the kit's stamp moves).
+Locally at stable every other test binary reads the same count at both pins. In CI (run 44349027237, at `rustc 1.85.0
+(4d91de4e4 2025-02-17)` and `rustc 1.100.0 (0ef1bc386 2026-11-09)`) every binary the gate ran before the first red reads
+what it read at the old pin (run 44287938583, the same two compilers); the gate's `cargo test` stops at the first failing
+binary, so the ones after it ran locally only. Two legs red, each on vectors D266.9 explains:
+
+- the seams leg on `queryError/illFormedSource`: the reference reads `{"$type":"illFormedSource","reason":"why"}` back to
+  its own bytes; the crate's seam declaration refuses it, `UnknownTag` at `$type`;
+- the query declaration leg on its first source vector, whose expected document the seam codec refuses for the same
+  unknown tag. Measured past that (a probe, not committed), the leg's case counts are 46, 34, 4, 14, 9 against its
+  constants' 46, 24, 4, 14, 9, and eight vectors are answered differently, the eight refusals: the leg does not read the
+  data form's `source`, so each is the head's declaration over a `Ref`, admitted, or (the ragged table beside a
+  parameter named twice) refused `duplicateParam` at `params` where the reference refuses `illFormedSource` at
+  `source`. The two acceptances answer `admitted` already, for the wrong reason.
+
+The reason the reference states for each of the eight tables, beside the sentence the crate's own `Table::validate`
+gives for the same table built with `Column::of_cells` (`ColumnError::message`), compared byte for byte:
+
+| vector | the reference's `reason` | the crate's `ColumnError::message` |
+|---|---|---|
+| a schema name twice | `malformed table: duplicate schema name: a` | the same |
+| a column name twice | `malformed table: duplicate column name: a` | the same |
+| a schema name with no column | `malformed table: schema names with no column: b` | the same |
+| a column absent from the schema | `malformed table: columns absent from the schema: z` | the same |
+| a column of another type | `column 'a': expected float value, got int` | the same |
+| ragged columns | `ragged table: column 'b' has 1 rows where the first column has 2` | the same |
+| a float not finite | `column 'a': non-finite float is not representable on the Fuaran wire: NaN` | the same |
+| decimal text not canonical | `malformed: a: a decimal cell must carry canonical decimal text — an optional '-', integer digits with no leading zero, and a '.' with fraction digits only where the fraction is non-zero, with no trailing zero (build the cell with Cell.decimal)` | the same |
+
+So no sentence moves, and none another family pins is touched: the case's `reason` is `ColumnError::message` as it
+stands.
+
+**D19.2 — the case, and its place in the seam's union.** `QueryError::IllFormedSource { reason: String }`, appended
+after `OrderNotHonoured`, so no case moves and the enum's order stays the reference's. `reason` is the column layer's
+sentence, `ColumnError::message` of `Table::validate`'s refusal, as `IllFormedLiteral`'s `reason` is for a literal.
+`QueryError::describe` gains the reference's sentence word for word: "Refused: the declaration's embedded table is not
+one the column layer accepts: <reason>. Validate the table (Table.validate) before declaring it." The seam's
+`QUERY_ERROR` declaration (`src/seam.rs`) gains the case `illFormedSource` with one required member, `reason`, a string,
+appended last as the reference's IDL appends it. The seams' declaration-driven reader reads it and its canonical
+re-encoding writes it, which is the whole of the crate's query-error reader and writer (the crate holds no typed writer
+of the document, D14.3); the leg's projection of a `QueryError` into the document gains the arm. It is a registration
+refusal: no resolver runs.
+
+- **Lost.** The sentence in the crate's spelling of the function (`Table::validate`): every other sentence is the
+  reference's twin, and the column layer's own messages already name the reference's functions (`Cell.decimal`), so a
+  model reading refusals from two hosts reads one sentence. `#[non_exhaustive]` on `QueryError` with this case: it would
+  make every later case additive, but it is a decision about the enum's whole future rather than this case, and it
+  would oblige a wildcard arm in every host's match now; not taken here. A case carrying the `ColumnError` itself: the
+  document carries a string, so the case would hold a value its document cannot write back.
+
+**D19.3 — where the gate's clause sits.** First in `Query::admission_fault_at`, the one gate: when `source` is
+`DataSource::Embedded(t)` and `t.validate()` refuses, the gate answers `IllFormedSource` at the path `[source]`; a
+`DataSource::Ref` is not read. The parameters, the filter and the order follow, as before. `Query::admit` (through
+`admit_at`), `QueryRegistry::register` (through `admit`, after the held id) and the reader `AdmittedQuery::decode_value`
+(through `admit_at`, last) all run `admission_fault_at`, so each passes through the clause exactly once, before the
+parameters. The reader never meets the refusal: `column::decode_value` ends in `Table::validate`, so a text whose table
+the column layer refuses is refused earlier, `OutOfRange` at `source`, and a text carrying such a table beside a
+parameter named twice is refused at `source` by the reader as a value is by the gate. The reader's gate run validates
+the table a second time; that is the price of one gate.
+
+- **Lost.** A source check in `admit` and `register` only, leaving `admission_fault_at` as it was: two gates, and
+  `admission_fault_at`, which the leg and hosts call, would admit what `admit` refuses. Skipping the clause in the reader
+  because the codec already validated: a flag on the gate, so the reader's gate and the registry's would no longer be
+  one function (D14.4). `column::try_encode` as the check: it renders the text only to discard it.
+
+**D19.4 — a valid table out of schema order, and what "reads back as the same declaration" means.** The crate takes the
+reference's (E2). `admit` answers the declaration it was handed, columns in the order the host built them; it
+normalises nothing. The writer (`column::encode_json`, unchanged) writes the columns keyed by name in schema order, and
+the reader builds them in schema order, so an admitted declaration whose embedded table's columns are not in schema
+order reads back as the same declaration with those columns in schema order (the column codec's normal form), and that
+declaration reads back as itself; the two orders of one table write the same bytes. `AdmittedQuery`'s `PartialEq` is
+structural, so the read-back equals the declaration written exactly when its table is in schema order (always, for a
+`Ref`). The port-side test `an_admitted_declarations_embedded_table_reads_back_in_schema_order` (tests/query.rs) states
+both acceptances: in schema order the read-back equals the declaration written; out of it the read-back equals the
+declaration with its columns put in the schema's order, its text is the same bytes, and a second read-back equals the
+first.
+
+- **Lost.** Refusing a valid table out of schema order (D266's (E1-r)): stricter than the column layer it carries, and
+  the reference ruled it out. Normalising at admission ((E1-n)): `admit` would answer another value than it was handed,
+  and `Table` would need a public normaliser, for no reader-visible difference. Equality up to column order in
+  `Table`'s `PartialEq`: it would change what the column layer's equality means for every caller and family to serve
+  one reading.
+
+**D19.5 — how the leg builds a table from a vector's `source`.** `stated` (tests/query_declaration.rs) reads `source`
+when the vector carries it and replaces the head declaration's source with `DataSource::Embedded(Table { schema,
+columns })`: `schema` is each `{name, type}` as `Field::create`, and `columns` each `{name, type, cells}` as
+`Column::of_cells(name, type, cells)`, the type's own builder, every cell read by `cell_of` as the file writes it (a
+non-finite float's token in quotes). Both are `Vec`s built in the vector's order, so a name that repeats in either list
+is held twice, and `Table`'s public fields take them as stated. A builder refusal fails the leg: the file states each
+column "held as stated by its type's builder", and none of the ten is a builder refusal. `register` vectors pass through
+the same `stated`.
+
+- **Lost.** Reading the source through the column codec from text: the codec's text keys columns by name, which cannot
+  repeat (the strict parser refuses a repeated member), and the file states a table as data for exactly that reason. A
+  shared builder in `tests/common`: one leg reads a table as data, so the helper lives beside `stated`.
+
+**D19.6 — the leg and the port-side tests.** The leg answers 107 of 107 (`declarationRefused` 46, `admissionFault` 34,
+`register` 4, `validateParams` 14, `dispatch` 9); `referenceOnly` still names 16 and `unreached` 6. The seams leg answers
+all 143 before it judges, so a red names every vector answered differently, and prints its count line. The new vectors
+pin the gate's path and error value for a source (`admissionFault`), which no port-side assertion stated before this
+phase, so no existing assertion retires. The port-side tests this phase adds keep what no vector pins: the sentence of
+`IllFormedSource` (`says`, and `register`'s refusal, since no `register` vector carries a source), and the read-back of
+D19.4, which the family states only as `admitted`.
+
+**D19.7 — the version.** A public enum the crate does not mark non-exhaustive gains a case, so a host's exhaustive match
+on `QueryError` no longer compiles, and `admit` and `register` refuse declarations they admitted. By D11.8's rule the API
+broke: `0.0.6-alpha.1` becomes `0.0.7-alpha.1`, outside every requirement on `0.0.6-*`. Riding `0.0.6-alpha.1` lost: no
+version of the crate is released, but every break so far has moved it (D18.9), and a host depending on a commit of
+`0.0.6-alpha.1` would read the new case as compatible. No crate release, tag or publish. The pin moves again to Core's
+`0.44.0` tag when Core releases it.
+
+**D19.8 — out of scope.** Holding a resolver's rows to `Table::validate` at the dispatch, and the result's writers, are
+Core's Phase 692 (D266.9 point 3), not landed at this pin; the crate's `dispatch` and its result handling do not move.
