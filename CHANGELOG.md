@@ -3,6 +3,45 @@
 Every change to the crate's public API, newest first. Each entry names the Core commit the crate certifies against
 (`core-pin.json`), and whether that Core version is released.
 
+## 0.0.7-alpha.1 — 2026-11-18 — breaking — the admission gate reads a declaration's embedded table, at Core `66ff009e` (draft)
+
+Follows Core `66ff009ee306b20206d4427a874084e38721f3d0`, version `0.44.0`, a **draft**, not released (a commit on Core's
+`main` inside its open `0.44.0` slot; no tag names it). Previous pin `889c869d` (`0.44.0`, a draft). The crate follows
+Core's Phase 688 (the reference's D266): the admission gate reads the declaration's source first, and refuses an
+embedded table the column layer refuses, so the writer no longer writes a declaration whose table the reader refuses or
+reads back as another declaration (a column dropped or added, a column's type or a decimal changed). DECISIONS.md D19.
+
+**What a caller must change:**
+
+- **Match the new case.** `QueryError` gains `IllFormedSource { reason }`, after `OrderNotHonoured`: an exhaustive
+  `match` on `QueryError` needs its arm. `reason` is the column layer's sentence (`ColumnError::message` of
+  `Table::validate`'s refusal); `describe` says "Refused: the declaration's embedded table is not one the column layer
+  accepts: <reason>. Validate the table (Table.validate) before declaring it." On the wire it is the query-error
+  document `{"$type":"illFormedSource","reason":…}`, which the seams' reader now reads.
+- **Validate an embedded table before declaring it.** `Query::admit`, `QueryRegistry::register` and
+  `admission_fault_at` refuse a declaration whose `source` is a `DataSource::Embedded` table `Table::validate` refuses,
+  `IllFormedSource` at `source`, BEFORE the parameters: a declaration with such a table and a parameter named twice is
+  refused for the table. A declaration `0.0.6-alpha.1` admitted with such a table is refused now; one written under it
+  may have been read by another host as another declaration, so a host that stored one validates it. A `Ref` source is
+  not read.
+- **Expect the normal form on read-back.** A valid table whose columns are not in schema order is admitted as handed
+  (`admit` normalises nothing), and its text reads back with the columns in schema order: an admitted declaration reads
+  back as the one written, equal up to the column codec's normal form, and that declaration reads back as itself. A
+  caller comparing a declaration it built with one it read back builds its table in schema order.
+
+Unchanged: every other public item; the reader's own refusal of a text whose table the column codec refuses
+(`OutOfRange` at `source`, before the gate); the dispatch and the result's rows (Core's Phase 692, not at this pin).
+
+**Certified:** `queryDeclarationLaws`, all 107 vectors (`declarationRefused` 46, `admissionFault` 34, `register` 4,
+`validateParams` 14, `dispatch` 9), an embedded table stated as data among the gate's inputs; `seamRefusals`, all 143;
+`queryGrantLaws` 19 unchanged. Every other family's vectors are byte for byte those of the previous pin, with the same
+counts.
+
+**Tests:** `tests/query.rs` pins `IllFormedSource`'s sentence through the gate, `admit` and `register`, beside a
+parameter named twice too, and what an admitted embedded table reads back as, in schema order and out of it (D19.4,
+D19.6); no assertion retires, since no port-side assertion stated a source's refusal before. The seams leg answers
+every vector before it judges and prints its count line.
+
 ## 0.0.6-alpha.1 — 2026-11-18 — breaking — only an admitted query declaration is written, keyed or granted, at Core `889c869d` (draft)
 
 Follows Core `889c869d99bb0922577ba64651cee434c757cedf`, version `0.44.0`, a **draft**, not released (a commit on Core's

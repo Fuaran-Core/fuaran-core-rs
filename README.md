@@ -37,8 +37,8 @@ when no checkout is found. Which families are run, with each leg's count, is
 [DECISIONS.md](DECISIONS.md) D8 (D6 recorded the first certification); the counts themselves are the spine's
 adoption record in each of the reference's family manifests.
 
-The pin is Core `889c869d` (`0.44.0`, a **draft**, not released: a commit on Core's `main` inside its open `0.44.0`
-slot, which no tag names), CHANGELOG.md and DECISIONS.md D13, D14, D17 and D18. At that commit the crate answers every family with a manifest but two, which `tests/families.rs` names with
+The pin is Core `66ff009e` (`0.44.0`, a **draft**, not released: a commit on Core's `main` inside its open `0.44.0`
+slot, which no tag names), CHANGELOG.md and DECISIONS.md D13, D14, D17, D18 and D19. At that commit the crate answers every family with a manifest but two, which `tests/families.rs` names with
 the reason: `encodingProfile` (declined, D8) and `identity` (not adopted, D14.7: its vocabulary is a test fixture of the
 reference rather than conformance data, two of its lines need the `v1` rendering D8 declined, and the crate holds no IDL
 vocabulary reader beyond the canonical-form slice). The capability and query families among those it answers:
@@ -48,13 +48,18 @@ space through validation, the key, the round trip and the type check), `capabili
 identity, grant coverage, the named decision and dispatch, each decided under the file's context labels and again under
 an integer context), `queryGrantLaws`, all 19 (the identity of a read and whether a grant covers it, over four
 declarations read through the crate's declaration reader, each coverage also decided by the query registry), and
-`queryDeclarationLaws`, all 97, answered at Core `889c869d` (the declaration reader's refusals on code and path, the
-two budgets' among them; the admission gate, registration, argument validation and the registry's gated dispatch on the
-verdict and the query-error document, read through the seam codec and never compared as a sentence; D17, D18). These five families run on the standard
+`queryDeclarationLaws`, all 107 (`declarationRefused` 46, `admissionFault` 34, `register` 4, `validateParams` 14,
+`dispatch` 9), answered at Core `66ff009e` (the declaration reader's refusals on code and path, the two budgets' among
+them; the admission gate, an embedded table stated as data among its inputs, registration, argument validation and the
+registry's gated dispatch on the verdict and the query-error document, read through the seam codec and never compared
+as a sentence; D17, D18, D19); `seamRefusals`, all 143, reads the query-error document's `illFormedSource` case. These five families run on the standard
 profile and again on the embedded one, the library built without `std`; the embedded run executes on the build host,
 and the `thumbv7em-none-eabihf` build is a build. `tests/query.rs` keeps what no vector pins: each refusal's sentence,
 and the few codes and values no vector reaches (D17.9, D17.10, D18.8). The crate writes, keys and grants only a
-declaration its admission gate admitted (`AdmittedQuery`, D18); the gate does not read the declaration's source.
+declaration its admission gate admitted (`AdmittedQuery`, D18). The gate reads the declaration's source first: an
+embedded table `Table::validate` refuses is refused `IllFormedSource` at `source`, before the parameters, and a `Ref`
+is not read; so an admitted declaration's text reads back as the declaration written, equal up to the column codec's
+normal form, its embedded table's columns in schema order (D19).
 
 On the embedded profile the decision path allocates nothing once the registry is built, for a capability and for a
 read: `decide_named` and `dispatch` (allowed, needing approval, granted, parked or denied), the identity written into a
@@ -64,7 +69,7 @@ reading a tree argument, the owned argument pairs a caller presents, and a filte
 declaration alone rather than of the registry that rendered its filter). One function decides at both registries
 (D14.6). A document argument is read to decide its membership and to spell it, so it allocates in proportion to the
 document; the same leg measures and reports it (D13.8). The crate requires `alloc` on every profile. This statement
-certifies against Core `889c869d` (`0.44.0`, draft, not released); the crate's version is `0.0.6-alpha.1`
+certifies against Core `66ff009e` (`0.44.0`, draft, not released); the crate's version is `0.0.7-alpha.1`
 (CHANGELOG.md).
 
 These claims are checked at two Rust versions: exactly 1.85.0, the minimum `Cargo.toml` declares
