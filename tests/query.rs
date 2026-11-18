@@ -22,7 +22,7 @@ use common::*;
 use fuaran_core::capability::{
     DeterminismFactor, DeterminismSet, EffectClass, Grant, HostEffect, PolicyDecision, PolicyGate,
 };
-use fuaran_core::column::{Cell, ColumnType, DataSource, TimeUnit};
+use fuaran_core::column::{Cell, Column, ColumnType, DataSource, Table, TimeUnit};
 use fuaran_core::decode::DecodeCode;
 use fuaran_core::field::Field;
 use fuaran_core::json::{JVal, PathSeg, render_canonical};
@@ -313,6 +313,88 @@ fn a_held_id_is_refused_before_the_declaration_is_admitted() {
         r.register(again).unwrap_err().describe(),
         "Refused: the query 'sales' is registered twice."
     );
+}
+
+// ─── The declaration's embedded table (D19) ─────────────────────────────────
+
+/// A table over the schema `a: int`, `b: string`, its columns in the order given.
+fn table(columns: Vec<Column>) -> Table {
+    Table {
+        schema: vec![
+            Field::create("a", ColumnType::Int),
+            Field::create("b", ColumnType::String),
+        ],
+        columns,
+    }
+}
+
+fn int_column(cells: &[i32]) -> Column {
+    let cells: Vec<Cell> = cells.iter().map(|n| Cell::Int(*n)).collect();
+    Column::of_cells("a", ColumnType::Int, &cells).unwrap()
+}
+
+fn string_column(cells: &[&str]) -> Column {
+    let cells: Vec<Cell> = cells.iter().map(|s| Cell::Str(s.to_string())).collect();
+    Column::of_cells("b", ColumnType::String, &cells).unwrap()
+}
+
+/// `sales` over an embedded table in place of its `Ref`.
+fn over(t: Table) -> Query {
+    let mut q = sales();
+    q.source = DataSource::Embedded(t);
+    q
+}
+
+/// QueryRegistry.fs:49-56 (the source clause, first); Query.fs:276-279. The
+/// family pins the path and the error value (`admissionFault`); the sentence,
+/// and `register`'s refusal (no `register` vector carries a source), are the
+/// port's.
+#[test]
+fn an_embedded_table_the_column_layer_refuses_is_refused_before_the_parameters() {
+    let ragged = over(table(vec![int_column(&[1, 2]), string_column(&["x"])]));
+    let sentence = "Refused: the declaration's embedded table is not one the column layer accepts: ragged table: column 'b' has 1 rows where the first column has 2. Validate the table (Table.validate) before declaring it.";
+    says(&ragged, sentence);
+    assert_eq!(ragged.clone().admit().unwrap_err().describe(), sentence);
+    assert_eq!(
+        QueryRegistry::new()
+            .register(ragged.clone())
+            .unwrap_err()
+            .describe(),
+        sentence
+    );
+    // Beside a parameter named twice, the source is read first.
+    let mut both = ragged;
+    both.params.push(param("rate", ColumnType::String, false));
+    says(&both, sentence);
+    assert_eq!(
+        QueryRegistry::new().register(both).unwrap_err().describe(),
+        sentence
+    );
+}
+
+/// D19.4, the reference's (E2) (DECISIONS.md D266.9 point 2): a valid table is
+/// admitted in any column order, `admit` answers the declaration it was handed,
+/// and the text reads back as the declaration written up to the column codec's
+/// normal form: its columns in schema order, which then reads back as itself.
+#[test]
+fn an_admitted_declarations_embedded_table_reads_back_in_schema_order() {
+    let in_order = over(table(vec![int_column(&[1]), string_column(&["x"])]));
+    let out_of_order = over(table(vec![string_column(&["x"]), int_column(&[1])]));
+    // In schema order, the text reads back as the declaration written.
+    let written = admitted(in_order);
+    let text = written.encode();
+    assert_eq!(AdmittedQuery::decode(&text).unwrap(), written);
+    // Out of it, the gate admits the declaration as handed, and the writer
+    // writes the same bytes as for the table in schema order.
+    let handed = admitted(out_of_order.clone());
+    assert_eq!(handed.declaration(), &out_of_order);
+    assert_eq!(handed.encode(), text);
+    // So it reads back with its columns in schema order, not as written, and
+    // that declaration reads back as itself.
+    let read = AdmittedQuery::decode(&handed.encode()).unwrap();
+    assert_ne!(read, handed);
+    assert_eq!(read, written);
+    assert_eq!(AdmittedQuery::decode(&read.encode()).unwrap(), read);
 }
 
 // ─── The admitted declaration (D18.2, D18.3) ────────────────────────────────
