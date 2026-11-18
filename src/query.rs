@@ -7,9 +7,10 @@
 //!
 //! - [`Query`] and its parts ([`QueryParam`], [`ColumnPredicate`], [`SortKey`])
 //!   are the reference's records as plain data.
-//! - [`Query::admission_fault_at`] is THE gate: a repeated parameter, then the
-//!   filter, then the order, each held to the result's columns;
-//!   [`Query::admit`] answers the [`AdmittedQuery`] it admits.
+//! - [`Query::admission_fault_at`] is THE gate: an embedded table the column
+//!   layer refuses, then a repeated parameter, then the filter, then the order,
+//!   each held to the result's columns; [`Query::admit`] answers the
+//!   [`AdmittedQuery`] it admits.
 //! - [`AdmittedQuery::decode`] and [`AdmittedQuery::encode`] read and write the
 //!   canonical declaration, the filter and the order through the seams' one
 //!   reader ([`crate::seam`]).
@@ -689,15 +690,28 @@ impl Query {
     }
 
     /// The registration refusal the declaration earns, with the path to the
-    /// member at fault, or `None`: a parameter named twice (`DuplicateParam`, the
-    /// first repeat, at `params`); then each filter predicate in order (at
-    /// `where.i`); then each order key (at `orderBy.i`): an undeclared column,
-    /// then a column named before (`DuplicateSortColumn`, at the second). THE
-    /// gate: [`QueryRegistry::register`] and [`AdmittedQuery::decode`] both run it,
-    /// through [`Query::admit`] (DECISIONS.md D14.4, D18.2). Twin of
+    /// member at fault, or `None`: first an embedded table [`Table::validate`]
+    /// refuses (`IllFormedSource`, with the column layer's sentence, at
+    /// `source`; a `Ref` is not read); then a parameter named twice
+    /// (`DuplicateParam`, the first repeat, at `params`); then each filter
+    /// predicate in order (at `where.i`); then each order key (at `orderBy.i`):
+    /// an undeclared column, then a column named before (`DuplicateSortColumn`,
+    /// at the second). THE gate: [`QueryRegistry::register`] and
+    /// [`AdmittedQuery::decode`] both run it, through [`Query::admit`]
+    /// (DECISIONS.md D14.4, D18.2, D19.3). Twin of
     /// `QueryRegistry.admissionFaultAt`.
     pub fn admission_fault_at(&self) -> Option<(Vec<PathSeg>, QueryError)> {
         let key = |k: &str| PathSeg::Key(k.to_string());
+        if let DataSource::Embedded(t) = &self.source {
+            if let Err(e) = t.validate() {
+                return Some((
+                    vec![key("source")],
+                    QueryError::IllFormedSource {
+                        reason: e.message(),
+                    },
+                ));
+            }
+        }
         if let Some(dup) = self
             .params
             .iter()
@@ -761,7 +775,11 @@ mod admitted {
     /// [`Query::admit`]; answered by the reader ([`AdmittedQuery::decode`]) and
     /// by a registry's [`try_find`](super::QueryRegistry::try_find) and
     /// [`enumerate`](super::QueryRegistry::enumerate). Two admissions of one
-    /// declaration are equal. The gate does not read the declaration's source.
+    /// declaration are equal. The gate refuses an embedded table the column
+    /// layer refuses (`IllFormedSource`), so an admitted declaration's text
+    /// reads back as the declaration written, equal up to the column codec's
+    /// normal form: an embedded table reads back with its columns in schema
+    /// order, and that declaration reads back as itself (DECISIONS.md D19.4).
     /// Twin of `AdmittedQuery`.
     #[derive(Debug, Clone, PartialEq)]
     pub struct AdmittedQuery {
@@ -917,7 +935,10 @@ impl AdmittedQuery {
     }
 
     /// The declaration as canonical JSON text: the same declaration always
-    /// writes the same bytes. Twin of `QueryCodec.encode`.
+    /// writes the same bytes, and [`AdmittedQuery::decode`] reads them back as
+    /// the declaration written, equal up to the column codec's normal form (an
+    /// embedded table's columns in schema order, D19.4). Twin of
+    /// `QueryCodec.encode`.
     pub fn encode(&self) -> String {
         render_canonical(&self.encode_json())
     }
