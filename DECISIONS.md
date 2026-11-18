@@ -1239,3 +1239,22 @@ the port's own, as D17.10 says: every sentence, and the codes and values no vect
 `try_find` and `enumerate`), moved (the writer, the reader and the identity, from `Query` to `AdmittedQuery`) and
 removed from the public surface (`ColumnPredicate::to_json`). By D11.8's rule the API broke, so `0.0.5-alpha.1` becomes
 `0.0.6-alpha.1`. No crate release, tag or publish. The pin moves again to Core's `0.44.0` tag when Core releases it.
+
+**D18.10 — built red first, as recorded.** Each change was preceded by a commit, alone, whose test failed to build or
+failed, and each such run is in CI at `rustc 1.85.0 (4d91de4e4 2025-02-17)` and `rustc 1.100.0 (0ef1bc386
+2026-11-09)`. The leg's constants at 97 (`4e14ec5`, run 44284917335): `4 of 97 vectors answered differently`, the four
+budgets. The tests on the admitted type (`ce810a5`, run 44285731301): no build, `E0432` unresolved import
+`fuaran_core::query::AdmittedQuery`, `E0599` no method `admit` and `declaration` on `Query`; then `6f16819` (run
+44286133341) built and passed every test but the four budget vectors. The budget test (`b0a8935`, run 44286222796): no
+build, `E0432` unresolved import `fuaran_core::query::PositiveInt`; then `c041950` (run 44286360031) green in both jobs,
+`queryDeclarationLaws: 97 of 97 vectors` (46, 24, 4, 14, 9). The dispatch's arms and the writer's privacy
+(`2ae9b30`, run 44286470034): the dispatch test failed at `tests/query.rs:794` (answered `PredicateNotHonoured` for a
+predicate the filter does not hold); locally the `compile_fail` doc test failed too, `Test compiled successfully, but
+it's marked compile_fail` (CI stops at the first failing test binary, before the doc tests). Then `6415d9d` (run
+44286610072) green in both jobs. Two things differ from D18.2 and D18.6 as first written. Stable rustdoc does not check
+a `compile_fail` doc test's error code, so a `compile_fail` passes on any compile error; each one is therefore paired
+with a doc test that differs only in the forbidden line and compiles (admitting through the gate; reading a predicate's
+tag and column), which is what shows the failure is the field's or the method's privacy. The admitted type's
+`compile_fail` could not be red before the type existed; its pair was (`E0432`, `E0599`). And the budget test's first
+form expected the written text to carry `"timeoutMs":1,`, where `timeoutMs` is the last member; it was corrected in the
+commit that built the budgets.
