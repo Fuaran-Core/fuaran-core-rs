@@ -430,6 +430,7 @@ pub static QUERY_ERROR: UnionDecl = UnionDecl {
             &[req("predicate", Slot::Union(&COLUMN_PREDICATE))],
         ),
         case("orderNotHonoured", &[req("column", Slot::Str)]),
+        case("illFormedSource", &[req("reason", Slot::Str)]),
     ],
 };
 

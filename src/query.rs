@@ -435,6 +435,11 @@ pub enum QueryError {
     PredicateNotHonoured { predicate: ColumnPredicate },
     /// The resolver cannot order the rows by this column.
     OrderNotHonoured { column: String },
+    /// The declaration's embedded table is one [`Table::validate`] refuses;
+    /// `reason` is the column layer's sentence ([`ColumnError::message`]).
+    /// Raised by the admission gate at `source`, before the parameters
+    /// (DECISIONS.md D19.2, D19.3).
+    IllFormedSource { reason: String },
 }
 
 /// How to write a value of a type a JSON scalar does not carry as itself.
@@ -588,6 +593,9 @@ impl QueryError {
             QueryError::OrderNotHonoured { column } => {
                 format!("Refused: the data source cannot order the rows by column '{column}'.")
             }
+            QueryError::IllFormedSource { reason } => format!(
+                "Refused: the declaration's embedded table is not one the column layer accepts: {reason}. Validate the table (Table.validate) before declaring it."
+            ),
         }
     }
 }
