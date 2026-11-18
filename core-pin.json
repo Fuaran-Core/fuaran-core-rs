@@ -1,7 +1,7 @@
 {
   "kind": "core-pin",
   "repository": "Fuaran-Core/fuaran-core",
-  "sha": "bd1a339f17302ab1cd6d6db732ff596fd4eaaaac",
-  "version": "0.43.1",
-  "reason": "Phase 683: the query declaration's refusals as law vectors (Core Phase 680, the reference's D263), the family queryDeclarationLaws. Core 0.43.1 is a DRAFT at this commit and is not released: the commit is on Core's main inside the open 0.43.1 slot, and no tag names it. The vectors of every family the port certified at the previous pin are what they were, but for the kit's version stamp (kitVersion 0.43.0 to 0.43.1) and the reference's own adoption records. Previous pin a9592b7 (Phase 665, Core 0.43.0 as released, tag v0.43.0). CI checks Core out at this commit; moving it is a deliberate act in the change that needs it, with the legs re-run against the new commit."
+  "sha": "889c869d99bb0922577ba64651cee434c757cedf",
+  "version": "0.44.0",
+  "reason": "Phase 690: the admitted query declaration (Core Phase 685, the reference's D264): the writer, the read's identity and the grant take only a declaration the admission gate admitted, the two budgets are positive integers, the predicate's own writer leaves the public surface, and the dispatch holds a resolver's unsupported predicate to the declaration's own; queryDeclarationLaws grows from 84 vectors to 97. Core 0.44.0 is a DRAFT at this commit and is not released: the commit is on Core's main inside the open 0.44.0 slot, which advanced the untagged 0.43.1 draft, and no tag names it. The vectors of every other family the port certified at the previous pin are what they were, but for the kit's version stamp (kitVersion 0.43.1 to 0.44.0) and the reference's own adoption records. Previous pin bd1a339f (Phase 683, Core 0.43.1, a draft). CI checks Core out at this commit; moving it is a deliberate act in the change that needs it, with the legs re-run against the new commit."
 }
