@@ -448,7 +448,7 @@ fn a_budget_is_a_positive_integer() {
     });
     let text = budgets.encode();
     assert!(text.contains(r#""pageSize":2147483647"#), "{text}");
-    assert!(text.contains(r#""timeoutMs":1,"#), "{text}");
+    assert!(text.ends_with(r#""timeoutMs":1}"#), "{text}");
     assert_eq!(AdmittedQuery::decode(&text).unwrap(), budgets);
     let e = AdmittedQuery::decode(&edited("timeoutMs", Some("0"))).unwrap_err();
     assert_eq!(e.message, "0 is outside [1, 2147483647]");

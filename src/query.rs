@@ -300,6 +300,25 @@ impl SortKey {
     }
 }
 
+/// A positive integer: one or more, up to `i32::MAX`. Made only by
+/// [`PositiveInt::new`], which answers `None` for zero or below, and read by
+/// [`PositiveInt::get`] (DECISIONS.md D18.5). Twin of `PositiveInt`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PositiveInt(i32);
+
+impl PositiveInt {
+    /// The positive integer `n`, or `None` when `n` is zero or below. Twin of
+    /// `PositiveInt.tryCreate`.
+    pub fn new(n: i32) -> Option<PositiveInt> {
+        (n >= 1).then_some(PositiveInt(n))
+    }
+
+    /// Its value. Twin of `PositiveInt.Value`.
+    pub fn get(self) -> i32 {
+        self.0
+    }
+}
+
 /// A query declaration: a named, registrable read. Pure data — it carries no
 /// host code; the host's resolver performs the read (DECISIONS.md D14.2). Twin of
 /// `Query`.
@@ -316,9 +335,9 @@ pub struct Query {
     /// Where the rows come from: an embedded table, or a name only the host resolves.
     pub source: DataSource,
     /// The read's time budget in milliseconds, for the resolver to honour.
-    pub timeout_ms: Option<i32>,
+    pub timeout_ms: Option<PositiveInt>,
     /// The rows per page the host should return.
-    pub page_size: Option<i32>,
+    pub page_size: Option<PositiveInt>,
     /// The filter, the wire's `where`: a conjunction, empty for none.
     pub filter: Vec<ColumnPredicate>,
     /// The order, most significant key first; empty leaves it to the source.
@@ -801,8 +820,12 @@ fn optional_list<T>(
     }
 }
 
-fn optional_int(c: &Cursor<'_>, name: &str) -> Result<Option<i32>, DecodeError> {
-    c.optional(name)?.map(|at| at.int()).transpose()
+/// An optional budget: an integer of one or more; zero or below is `OutOfRange`
+/// at the member, a fraction or a string `WrongKind` (D18.5).
+fn optional_budget(c: &Cursor<'_>, name: &str) -> Result<Option<PositiveInt>, DecodeError> {
+    c.optional(name)?
+        .map(|at| at.int_range(1, i32::MAX).map(PositiveInt))
+        .transpose()
 }
 
 impl Query {
@@ -849,10 +872,10 @@ impl AdmittedQuery {
         ];
         let int = |n: i32| JVal::Num(f64::from(n));
         if let Some(t) = q.timeout_ms {
-            fields.push(("timeoutMs".to_string(), int(t)));
+            fields.push(("timeoutMs".to_string(), int(t.get())));
         }
         if let Some(p) = q.page_size {
-            fields.push(("pageSize".to_string(), int(p)));
+            fields.push(("pageSize".to_string(), int(p.get())));
         }
         if !q.filter.is_empty() {
             fields.push(("where".to_string(), q.filter_json()));
@@ -912,8 +935,8 @@ impl AdmittedQuery {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let effect = effect_of(&c.field("effect")?)?;
-        let timeout_ms = optional_int(c, "timeoutMs")?;
-        let page_size = optional_int(c, "pageSize")?;
+        let timeout_ms = optional_budget(c, "timeoutMs")?;
+        let page_size = optional_budget(c, "pageSize")?;
         let filter = optional_list(c, "where", predicate_of)?;
         let order_by = optional_list(c, "orderBy", sort_key_of)?;
         let source_at = c.field("source")?;
