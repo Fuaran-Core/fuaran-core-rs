@@ -1,6 +1,6 @@
 [package]
 name = "fuaran-core"
-version = "0.0.5-alpha.1"
+version = "0.0.6-alpha.1"
 edition = "2024"
 # The minimum the gate runs at, exactly: CI's minimum job and run.ps1 read this line, "1.85" as 1.85.0 (DECISIONS.md D15, D16).
 # Edition 2024 needs 1.85.

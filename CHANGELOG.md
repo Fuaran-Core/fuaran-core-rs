@@ -3,6 +3,47 @@
 Every change to the crate's public API, newest first. Each entry names the Core commit the crate certifies against
 (`core-pin.json`), and whether that Core version is released.
 
+## 0.0.6-alpha.1 — 2026-11-18 — breaking — only an admitted query declaration is written, keyed or granted, at Core `889c869d` (draft)
+
+Follows Core `889c869d99bb0922577ba64651cee434c757cedf`, version `0.44.0`, a **draft**, not released (a commit on Core's
+`main` inside its open `0.44.0` slot; no tag names it). Previous pin `bd1a339f` (`0.43.1`, a draft). The crate follows
+Core's Phase 685 (the reference's D264): the declaration's writer, the read's identity and its grant take only a
+declaration the admission gate admitted, so the writer no longer turns a `Null` literal the gate refuses into the empty
+string, which a string column reads back as another filter; a budget is a positive integer; the predicate's own writer
+is the crate's; and the dispatch holds a resolver's unsupported predicate to the declaration's own. DECISIONS.md D18.
+
+**What a caller must change:**
+
+- **Admit before writing, keying or granting.** `Query::admit(q)` is the gate: `Ok(AdmittedQuery)`, or the refusal
+  `QueryRegistry::register` would answer for an id it does not hold. `encode` and `encode_json`,
+  `invocation_identity`, `write_invocation_identity` and `grant` are methods of `AdmittedQuery` now (they were of
+  `Query`), and `Grant::covers_read` takes `&AdmittedQuery`. `q.encode()` becomes `q.admit()?.encode()`.
+- **Read through the admitted declaration.** `Query::decode` and `decode_value` are `AdmittedQuery::decode` and
+  `AdmittedQuery::decode_value`, answering an `AdmittedQuery`; `QueryRegistry::try_find` answers
+  `Option<&AdmittedQuery>` and `enumerate` answers `&[AdmittedQuery]`. Read the declaration with `declaration()`
+  (`a.declaration().filter`) or take it with `into_declaration()`. Two admissions of one declaration are equal.
+- **Build a budget with `PositiveInt::new(n)`** in place of `Some(n)` (`None` for zero or below) and read it with
+  `get()`: `Query::timeout_ms` and `page_size` are `Option<PositiveInt>` (they were `Option<i32>`). A document whose
+  `timeoutMs` or `pageSize` is zero or below is refused by the reader, `OutOfRange` at that member, where it was
+  admitted.
+- **No public writer of a bare predicate.** `ColumnPredicate::to_json` is crate-private; a predicate is written inside
+  an admitted declaration's filter. `tag`, `column` and `literal` stay public, as does `SortKey::to_json`.
+- **A resolver's `PredicateNotHonoured`** now reaches the caller of `QueryRegistry::dispatch` only when its predicate is
+  one of the declaration's filter; any other is answered as `ExecutionFailed` naming the predicate's tag and column
+  ("the resolver refused filter '…' on column '…', which the declaration does not hold"), with no recoverable argument.
+
+Unchanged: `register` takes a `Query`; the gates a host writes (`QueryGate<C>`) and the resolver it hands `dispatch` are
+written over `&Query`; `resolve`, `validate_params`, `admission_fault_at` and `admission_fault`. The gate does not read
+the declaration's source.
+
+**Certified:** `queryDeclarationLaws`, all 97 vectors (`declarationRefused` 46, `admissionFault` 24, `register` 4,
+`validateParams` 14, `dispatch` 9), hosted and without `std`; `queryGrantLaws` 19 and `seamRefusals` 142 unchanged.
+Every other family reads the same at the new pin but for the kit's version stamp, with the same counts.
+
+**Tests:** `tests/query.rs` no longer pins the reader's refusals at `params`, `resultSchema` and `effect` or the reason
+for `-Infinity`, which vectors now pin (D18.8); it pins the dispatch's second arm to the reference's text by file and
+line, which no vector reaches (D18.7).
+
 ## 0.0.5-alpha.1, unchanged — 2026-11-17 — the query declaration's refusals certified, at Core `bd1a339f` (draft)
 
 Follows Core `bd1a339f17302ab1cd6d6db732ff596fd4eaaaac`, version `0.43.1`, a **draft**, not released (a commit on Core's
