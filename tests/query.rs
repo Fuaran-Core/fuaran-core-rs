@@ -5,7 +5,9 @@
 //! admission gate, registration and validation, so those assertions retired from
 //! here (the table is D17.9); since Core `889c869d` (`0.44.0`, draft) it pins the
 //! reader's refusals D17.10 held and `-Infinity`'s reason too, and those retired
-//! as well (D18.8). What stays is the port's own: each refusal's
+//! as well (D18.8); since Core `66ff009e` it pins the gate's path and value for
+//! an embedded table, which no assertion here stated before (D19.6). What
+//! stays is the port's own: each refusal's
 //! sentence (`QueryError::describe`, and the reader's message carrying it), which
 //! no vector pins, and the few codes, paths and values no vector reaches, each
 //! test citing the reference's file and line under `src/Fuaran.Core.Query/`

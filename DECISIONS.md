@@ -1390,3 +1390,20 @@ version of the crate is released, but every break so far has moved it (D18.9), a
 
 **D19.8 — out of scope.** Holding a resolver's rows to `Table::validate` at the dispatch, and the result's writers, are
 Core's Phase 692 (D266.9 point 3), not landed at this pin; the crate's `dispatch` and its result handling do not move.
+
+**D19.9 — built red first, as recorded.** Each change was preceded by a commit, alone and touching tests only, whose
+test failed to build or failed, each in CI at `rustc 1.85.0 (4d91de4e4 2025-02-17)` and `rustc 1.100.0 (0ef1bc386
+2026-11-09)`. The pin alone (`d06f554`, run 44349027237): the declaration leg panics at its first source vector, whose
+expected `illFormedSource` document the seam codec refuses. The case (`b40ade5`, run 44350129163): no build, `E0599` no
+variant `IllFormedSource` on `QueryError` (the leg's projection); locally `cargo test --test seams` failed `1 of 143
+vectors answered differently: queryError/illFormedSource: refused … UnknownTag`. Then `da46e28` (run 44350220007): the
+seams leg green locally (`seamRefusals: 143 of 143 vectors`), the declaration leg still red on its constants (`[46, 34,
+4, 14, 9]` against `[46, 24, 4, 14, 9]`). The gate's clause, two reds: `6f55fdf` (run 44350340551),
+`an_embedded_table_the_column_layer_refuses_is_refused_before_the_parameters` failed at `tests/query.rs:99` ("the gate
+refuses": it admitted the ragged table), while `an_admitted_declarations_embedded_table_reads_back_in_schema_order`
+passed, since D19.4 builds nothing; and `18c8e3a` (run 44350423834, which stops at the same `tests/query.rs` red before
+it reaches the leg), locally `8 of 107 vectors answered differently`, the eight source refusals. Then `86e4742` (run
+44350526017) green in both jobs, `queryDeclarationLaws: 107 of 107 vectors` (46, 34, 4, 14, 9). The CI gate prints a
+leg's count line only where it runs the leg with `--nocapture` (the declaration leg, in its build without `std`); the
+seams leg's line, `seamRefusals: 143 of 143 vectors`, is read locally, and in CI the leg passes its assertion against
+the manifest's 143.
