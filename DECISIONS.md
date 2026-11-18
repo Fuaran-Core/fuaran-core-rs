@@ -1113,3 +1113,129 @@ clause whose sentence changes would red `tests/query.rs` first, and `cargo test`
 the run would not have reached the leg. The next commit (`2ff369f`) restored the line, leaving `src/query.rs` byte for
 byte as it is on `main`, and the leg is green again (run 44101527779, both jobs, 84 of 84). Neither commit is the head
 that lands.
+
+## D18 — 2026-11-18 — the crate writes, keys and grants only an admitted query declaration: a type only the gate makes, positive budgets, and a predicate writer inside the crate
+
+Phase 690. Core's Phase 685 (the reference's D264, at Core `889c869d`, `0.44.0`, a draft) changed what the query seam
+accepts: the declaration's writer, the read's identity and the grant take only a declaration the admission gate
+admitted, a type only the gate produces; the two budgets are positive integers; the predicate's own writer leaves the
+public surface; and the dispatch holds a resolver's unsupported predicate to the declaration's own. The crate's
+declaration, writer and gate were twins of the reference's before that change (D14), so the crate still wrote a
+declaration its own gate refuses (a `Null` literal written as the empty string, which a string column reads back as
+another filter) and admitted a budget of zero. The reference's D264.8, point 9, lists what the crate must do. This entry
+decides how each item is built in the crate's idiom, before any of it is built, and records the alternatives that
+lost.
+
+**D18.1 — the pin, and what it measured.** `core-pin.json` moves from `bd1a339f` (`0.43.1`, a draft) to
+`889c869d99bb0922577ba64651cee434c757cedf`, a commit on Core's `main` inside its open `0.44.0` slot, which advanced the
+untagged `0.43.1` draft. No tag names it: it is a draft, not a release, and the pin's `reason` and the README say so,
+as D17.1 did. Measured first, with the pin moved alone: between the two commits every vector file the crate reads
+differs only in its `kitVersion` stamp (`0.43.1` to `0.44.0`) and the reference's adoption records, but for
+`query-declaration-laws.json` and its manifest row, which grow from 84 vectors to 97. Every other leg reads the same
+count at both pins, locally at stable and in CI at the floor and at stable. The query declaration leg was red at the
+new pin on its own per-case constants and, those moved, on four vectors, each a budget that is not positive, which the
+crate's reader admitted (`declaration-a-timeout-of-zero`, `declaration-a-timeout-below-zero`,
+`declaration-a-page-size-of-zero`, `declaration-a-page-size-below-zero`). The other nine new vectors the crate already
+answered as the reference does.
+
+**D18.2 — the admitted type, and how its field stays private.** `AdmittedQuery`, a struct with one private field, the
+`Query` the gate admitted, declared with its gate in a module of its own inside `query` (`mod admitted`, re-exported as
+`query::AdmittedQuery`). A struct field without `pub` is visible to its module and that module's descendants only, so
+the inner module makes the field nameable by exactly three items: the gate that builds the value, and the two accessors
+that answer the declaration, `declaration(&self) -> &Query` and `into_declaration(self) -> Query`. Nothing else in the
+crate, no test and no host can build one or reach inside it but through the gate; a doc test pins that a struct literal
+from outside the crate is refused at compile time (`E0451`). It derives `Debug`, `Clone` and `PartialEq` (a `Query`
+holds floats, so no `Eq`), so two admissions of one declaration are equal, and a decoded declaration compares with a
+registered one as before.
+
+- **The gate is `Query::admit(self) -> Result<AdmittedQuery, QueryError>`**, over the same body as
+  `admission_fault_at`: an internal `admit_at`, visible to `query` alone, answers the path beside the refusal for the
+  reader, and `admit` drops it, as `admission_fault` does. It takes the declaration by value, so admitting moves it into
+  the admitted value with no copy; a caller that wants the declaration back after a refusal clones before. It reads the
+  declaration and nothing else, so a host runs it before it writes or keys anything.
+- **Lost.** The field private to `query` itself, with the type beside `Query`: every function of a 1300-line module could
+  then build one, and the rule would be the module's care rather than the compiler's. `TryFrom<Query>`: the same
+  function under a name that does not read as the gate, with no second use. `QueryRegistry::admit`, the reference's
+  spelling: the crate's gate is a method of `Query` (D14.4: the registry and the reader both call
+  `admission_fault_at`), and a function on `QueryRegistry<C>` would ask a caller to name a context type it does not use.
+  `Deref<Target = Query>`: it would let `a.id` read through, and hide which of the two types a caller holds at exactly
+  the boundary the type exists to show; the explicit accessor is the reference's `Declaration`.
+- **The embedded table.** The gate does not read the declaration's source, so an admitted declaration whose embedded
+  table the column codec refuses is admitted and written; nothing here claims more of it than that. Core has not ruled
+  on whether its gate should read the source (its Phase 688), and the crate builds nothing for it.
+
+**D18.3 — which functions take it, and which answer it.**
+
+- **Take it**, as methods of `AdmittedQuery`: `encode_json` and `encode` (the declaration's writer moves to it, and
+  `Query` keeps no writer); `invocation_identity`, `write_invocation_identity` and `grant` (the read's identity and its
+  grant). `Grant::covers_read` takes `&AdmittedQuery`.
+- **Answer it**: the declaration reader, `AdmittedQuery::decode(text)` and `AdmittedQuery::decode_value(cursor)`, which
+  read the members as before and run the gate last through `admit_at`, so its refusal is still `OutOfRange` at the gate's
+  path with the registry's sentence (D14.3). `QueryRegistry::try_find` answers `Option<&AdmittedQuery>` and `enumerate`
+  answers `&[AdmittedQuery]`.
+- **Unchanged**: `register` takes a `Query` and runs the gate inside it, a held id refused first (D14.4); `unregister`,
+  `ids`, `with_gate`, `gates`, `decide_named`, `dispatch` and `under`. The gate a host writes (`QueryGate<C>`) and the
+  resolver it hands `dispatch` are still written over `&Query`: the registry hands each the declaration it admitted, as
+  the reference's registry does, and neither writes nor keys anything. `resolve` still answers `&Query`; a caller that
+  keys the read takes it from `try_find`. `validate_params`, `admission_fault_at` and `admission_fault` stay on `Query`.
+- **Lost.** The reader kept on `Query` (`Query::decode` answering an `AdmittedQuery`): one type's name over a function
+  that makes another; with the writer moved, the type that writes the text is the type that reads it. The registry
+  answering `&Query` and a caller admitting again to key: a second gate run, on a declaration the registry already
+  admitted. Handing a resolver or a gate the admitted type: it retypes every gate and resolver a host has written, for
+  callers that write and key nothing (the reference lost it for the same reason).
+
+**D18.4 — how the registry holds what it registered.** It holds `Vec<AdmittedQuery>`, in ordinal id order, beside the
+rendered filter and order text of each (D14.6), so `try_find` and `enumerate` lend what it holds and build nothing.
+The reference's registry holds `Query` and wraps it in the admitted case when it answers, because its seam's policy is
+typed over the declaration it holds; the crate's registry is its own type, and an answer by reference needs the admitted
+value to exist in it. `register` stores the value `admit` returned, so the registry is not a second place that makes
+one. Lost: holding `Query` and answering by value (a clone of the declaration on every lookup); holding `Query` and
+reinterpreting a reference to it as a reference to `AdmittedQuery` (`#[repr(transparent)]` and a pointer cast): `unsafe`
+the crate has none of, to save nothing the first choice costs.
+
+**D18.5 — the positive-integer budget.** `PositiveInt`, declared in `query`: a struct over a private `i32`, made by
+`PositiveInt::new(n: i32) -> Option<PositiveInt>` (`None` for zero or below) and read by `get(self) -> i32`, the
+names and shapes of `core::num::NonZeroI32`, with the reference's `tryCreate` and `Value` as its twin. It derives
+`Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`, `PartialOrd` and `Ord`. `Query::timeout_ms` and `page_size` become
+`Option<PositiveInt>`. The reader reads each member with `Cursor::int_range(1, i32::MAX)` in place of `int`, the
+crate's existing bounded read, and wraps the value: zero or below is `OutOfRange` at `timeoutMs` or `pageSize`, a
+fraction or a string still `WrongKind`, and the members keep their place in the reading order (after `effect`, before
+`where`). The writer writes `get()`. Lost: `NonZeroU32` (it holds values past `i32::MAX`, which the reader refuses, so
+the writer could write text the reader refuses); `NonZeroI32` (it admits a negative); a bound checked by the gate over
+`Option<i32>` (a fault list, not a type: the field could still be built non-positive and written).
+
+**D18.6 — where the predicate's writer goes.** `ColumnPredicate::to_json` becomes `pub(crate)`: the declaration's writer
+and the read's identity (the filter's canonical text) still call it, and only on an admitted declaration's filter.
+`literal_json` was private already and stays so. This is the reference's (A-iii): no spelling is given to a literal the
+gate refuses, and no second admitted type. A doc test pins that calling it from outside the crate is refused at compile
+time (`E0624`). `SortKey::to_json` stays public, as the reference's `encodeSortKey` does. The crate holds no writer of
+the query-error document (D14.3, D17.4), so the reference's (B-iv) has nothing to document here; the leg's projection
+of a `PredicateNotHonoured` into that document, which used `to_json`, is not reached by any vector (`unreached`, D17.6)
+and now refuses to project rather than write a predicate. Lost: keeping it public with its contract stating that a
+predicate whose literal its column cannot carry is written as handed (the reference's (A-iv)): ordinary use builds
+predicates by hand, so it is the path left on which ordinary use writes a refused literal as an admitted one.
+
+**D18.7 — how the dispatch tells the declaration's own predicate from another.** The crate's resolver answers a
+`QueryError` directly (D14.2: there is no `ResolveFault`). `QueryRegistry::dispatch` now passes a resolver's
+`PredicateNotHonoured { predicate }` through only when `predicate` is one of the resolved declaration's filter, by
+value equality (`q.filter.contains(&predicate)`, the reference's `List.contains p q.Where`). Otherwise it answers
+`ExecutionFailed` with no recoverable arguments and the detail `the resolver refused filter '<tag>' on column
+'<column>', which the declaration does not hold`, in the reference's words at Core `889c869d`
+(`src/Fuaran.Core.Query/Query.fs:606-617`). Every other refusal of the resolver passes through as before. So every
+`PredicateNotHonoured` a dispatch answers names an admitted declaration's predicate. No vector reaches the second arm
+(a resolver is host code), so `tests/query.rs` pins it to that text, file and line. Lost: identifying the predicate by
+its index in the filter: it retypes the refusal every host matches, for nothing equality does not already give.
+
+**D18.8 — what the leg and the port-side tests become.** The leg answers 97 of 97 (`declarationRefused` 46,
+`admissionFault` 24, `register` 4, `validateParams` 14, `dispatch` 9), and `referenceOnly` names 16. A port-side
+assertion a new vector now pins retires (D17.9's rule): the reader's `MissingField` at `params`
+(`declaration-no-params`), `WrongKind` at `resultSchema` (`declaration-a-result-schema-not-a-list`) and `MissingField` at
+`effect` (`declaration-no-effect`), which D17.10 held; and `IllFormedLiteral`'s reason for `-Infinity`
+(`admission-a-float-negative-infinity`). A test that wrote a refused declaration to show the reader refuses it now
+builds that text by editing an admitted declaration's text, since no writer takes a refused one. What else stays is
+the port's own, as D17.10 says: every sentence, and the codes and values no vector reaches.
+
+**D18.9 — the version.** A public item is retyped (`Query::timeout_ms` and `page_size`, `Grant::covers_read`, and
+`try_find` and `enumerate`), moved (the writer, the reader and the identity, from `Query` to `AdmittedQuery`) and
+removed from the public surface (`ColumnPredicate::to_json`). By D11.8's rule the API broke, so `0.0.5-alpha.1` becomes
+`0.0.6-alpha.1`. No crate release, tag or publish. The pin moves again to Core's `0.44.0` tag when Core releases it.
