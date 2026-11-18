@@ -14,7 +14,10 @@ fn seam_refusals() {
     let all = vectors(&doc);
     assert_eq!(all.len(), declared("refusals", "seamRefusals"));
 
+    // Every vector is answered before the leg judges, so a red names each vector
+    // answered differently, not only the first.
     let mut ran = 0usize;
+    let mut wrong = Vec::new();
     for v in all {
         let name = s(v, "name");
         let reader = s(v, "reader");
@@ -27,31 +30,41 @@ fn seam_refusals() {
         let parsed = decode::parse(s(v, "document"), &JsonLimits::STRICT)
             .unwrap_or_else(|e| panic!("{reader}/{name}: document unreadable: {e:?}"));
         let got = seam::read(&root, &parsed, &reading);
-        match v.field("canonical") {
-            Some(JVal::Str(canonical)) => {
-                let out = got.unwrap_or_else(|e| panic!("{reader}/{name}: refused {e:?}"));
-                assert_eq!(
-                    &fuaran_core::json::render_canonical(&out),
-                    canonical,
-                    "{reader}/{name}"
-                );
+        let differs = match (v.field("canonical"), got) {
+            (Some(JVal::Str(canonical)), Ok(out)) => {
+                let out = fuaran_core::json::render_canonical(&out);
+                (&out != canonical).then(|| format!("read {out} where {canonical} was expected"))
             }
-            _ => {
-                let e = match got {
-                    Err(e) => e,
-                    Ok(out) => panic!(
-                        "{reader}/{name}: read {} where {} was expected",
-                        fuaran_core::json::render_canonical(&out),
-                        s(v, "code")
-                    ),
-                };
-                assert_eq!(e.code.as_str(), s(v, "code"), "{reader}/{name}: {e:?}");
-                assert_eq!(&path_json(&e), arr(v, "path"), "{reader}/{name}: {e:?}");
+            (Some(JVal::Str(canonical)), Err(e)) => {
+                Some(format!("refused {e:?} where {canonical} was expected"))
             }
+            (_, Ok(out)) => Some(format!(
+                "read {} where {} was expected",
+                fuaran_core::json::render_canonical(&out),
+                s(v, "code")
+            )),
+            (_, Err(e)) => (e.code.as_str() != s(v, "code") || path_json(&e) != arr(v, "path"))
+                .then(|| {
+                    format!(
+                        "refused {e:?} where {} at {:?} was expected",
+                        s(v, "code"),
+                        arr(v, "path")
+                    )
+                }),
+        };
+        if let Some(why) = differs {
+            wrong.push(format!("{reader}/{name}: {why}"));
         }
         ran += 1;
     }
     assert_eq!(ran, declared("refusals", "seamRefusals"));
+    assert!(
+        wrong.is_empty(),
+        "{} of {ran} vectors answered differently:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+    eprintln!("seamRefusals: {ran} of {ran} vectors");
 }
 
 #[test]

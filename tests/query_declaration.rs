@@ -298,6 +298,9 @@ fn projected(e: &QueryError) -> JVal {
         QueryError::OrderNotHonoured { column } => {
             ("orderNotHonoured", vec![("column", str(column))])
         }
+        QueryError::IllFormedSource { reason } => {
+            ("illFormedSource", vec![("reason", str(reason))])
+        }
     };
     let mut fields = vec![("$type".to_string(), str(tag))];
     fields.extend(members.into_iter().map(|(k, v)| (k.to_string(), v)));
