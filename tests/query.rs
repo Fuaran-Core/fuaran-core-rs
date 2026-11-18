@@ -25,8 +25,8 @@ use fuaran_core::decode::DecodeCode;
 use fuaran_core::field::Field;
 use fuaran_core::json::{JVal, PathSeg, render_canonical};
 use fuaran_core::query::{
-    AdmittedQuery, ColumnPredicate, Query, QueryError, QueryParam, QueryRegistry, SortDirection,
-    SortKey,
+    AdmittedQuery, ColumnPredicate, PositiveInt, Query, QueryError, QueryParam, QueryRegistry,
+    SortDirection, SortKey,
 };
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -425,6 +425,35 @@ fn the_reader_refuses_the_members_no_vector_reaches() {
     }
 }
 
+/// QueryTypes.fs:118-138 (`PositiveInt`), QueryCodec.fs:75-83 (`budgetJson`,
+/// `budgetOf`): a budget is a positive integer, built only by its constructor,
+/// and the writer writes its value. That the reader refuses zero and below as
+/// `OutOfRange` at the member, and admits one, is the family's
+/// (`declaration-a-timeout-of-zero`, `declaration-budgets-of-one` and their
+/// siblings); the sentence is the port's own.
+#[test]
+fn a_budget_is_a_positive_integer() {
+    assert_eq!(PositiveInt::new(0), None);
+    assert_eq!(PositiveInt::new(-1), None);
+    assert_eq!(PositiveInt::new(i32::MIN), None);
+    assert_eq!(PositiveInt::new(1).map(PositiveInt::get), Some(1));
+    assert_eq!(
+        PositiveInt::new(i32::MAX).map(PositiveInt::get),
+        Some(i32::MAX)
+    );
+    let budgets = admitted(Query {
+        timeout_ms: PositiveInt::new(1),
+        page_size: PositiveInt::new(2147483647),
+        ..sales()
+    });
+    let text = budgets.encode();
+    assert!(text.contains(r#""pageSize":2147483647"#), "{text}");
+    assert!(text.contains(r#""timeoutMs":1,"#), "{text}");
+    assert_eq!(AdmittedQuery::decode(&text).unwrap(), budgets);
+    let e = AdmittedQuery::decode(&edited("timeoutMs", Some("0"))).unwrap_err();
+    assert_eq!(e.message, "0 is outside [1, 2147483647]");
+}
+
 /// QueryCodec.fs:144 (`Decoder.field` / `optField`, which read past every other
 /// member): the lenient reading.
 #[test]
@@ -438,8 +467,8 @@ fn an_unknown_member_is_read_past() {
 #[test]
 fn a_declaration_writes_its_canonical_text_and_reads_back_to_itself() {
     let q = Query {
-        timeout_ms: Some(2500),
-        page_size: Some(50),
+        timeout_ms: PositiveInt::new(2500),
+        page_size: PositiveInt::new(50),
         filter: vec![
             eq("n", Cell::Int(-3)),
             ColumnPredicate::GreaterThan {
