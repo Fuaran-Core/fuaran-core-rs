@@ -39,7 +39,7 @@
 //!
 //! ```compile_fail,E0451
 //! use fuaran_core::query::{AdmittedQuery, Query};
-//! fn forge(q: Query) -> AdmittedQuery {
+//! fn by_hand(q: Query) -> AdmittedQuery {
 //!     AdmittedQuery { query: q }
 //! }
 //! ```
