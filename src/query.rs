@@ -6,14 +6,16 @@
 //! (DECISIONS.md D14).
 //!
 //! - [`Query`] and its parts ([`QueryParam`], [`ColumnPredicate`], [`SortKey`])
-//!   are the reference's records as plain data; [`Query::decode`] and
-//!   [`Query::encode`] read and write the canonical declaration, the filter and
-//!   the order through the seams' one reader ([`crate::seam`]).
+//!   are the reference's records as plain data.
 //! - [`Query::admission_fault_at`] is THE gate: a repeated parameter, then the
-//!   filter, then the order, each held to the result's columns.
-//! - [`Query::invocation_identity`] is the identity a [`Grant`] for a read is
-//!   bound to, written as it is produced; [`Grant::covers_read`] compares a grant
-//!   with it as it is written, building nothing.
+//!   filter, then the order, each held to the result's columns;
+//!   [`Query::admit`] answers the [`AdmittedQuery`] it admits.
+//! - [`AdmittedQuery::decode`] and [`AdmittedQuery::encode`] read and write the
+//!   canonical declaration, the filter and the order through the seams' one
+//!   reader ([`crate::seam`]).
+//! - [`AdmittedQuery::invocation_identity`] is the identity a [`Grant`] for a
+//!   read is bound to, written as it is produced; [`Grant::covers_read`]
+//!   compares a grant with it as it is written, building nothing.
 //! - [`QueryRegistry`] resolves, validates ([`Query::validate_params`]) and then
 //!   decides through the function the capability registry decides by, so one
 //!   function decides at both registries (D14.6).
@@ -642,8 +644,9 @@ impl Query {
     /// first repeat, at `params`); then each filter predicate in order (at
     /// `where.i`); then each order key (at `orderBy.i`): an undeclared column,
     /// then a column named before (`DuplicateSortColumn`, at the second). THE
-    /// gate: [`QueryRegistry::register`] and [`Query::decode`] both run it
-    /// (DECISIONS.md D14.4). Twin of `QueryRegistry.admissionFaultAt`.
+    /// gate: [`QueryRegistry::register`] and [`AdmittedQuery::decode`] both run it,
+    /// through [`Query::admit`] (DECISIONS.md D14.4, D18.2). Twin of
+    /// `QueryRegistry.admissionFaultAt`.
     pub fn admission_fault_at(&self) -> Option<(Vec<PathSeg>, QueryError)> {
         let key = |k: &str| PathSeg::Key(k.to_string());
         if let Some(dup) = self
@@ -688,6 +691,66 @@ impl Query {
     /// `QueryRegistry.admissionFault`.
     pub fn admission_fault(&self) -> Option<QueryError> {
         self.admission_fault_at().map(|(_, e)| e)
+    }
+}
+
+// ─── The admitted declaration ────────────────────────────────────────────────
+
+pub use admitted::AdmittedQuery;
+
+/// The admitted declaration in a module of its own, so its field is nameable by
+/// the gate and the two accessors alone: nothing else in the crate, and nothing
+/// outside it, can build one but through [`Query::admit`] (DECISIONS.md D18.2).
+mod admitted {
+    use super::{PathSeg, Query, QueryError};
+    use crate::prelude::*;
+
+    /// A declaration the admission gate admitted: the only declaration the
+    /// writer ([`AdmittedQuery::encode`]), the read's identity
+    /// ([`AdmittedQuery::invocation_identity`]) and its grant take, so no
+    /// declaration the gate refuses is written, keyed or granted. Made only by
+    /// [`Query::admit`]; answered by the reader ([`AdmittedQuery::decode`]) and
+    /// by a registry's [`try_find`](super::QueryRegistry::try_find) and
+    /// [`enumerate`](super::QueryRegistry::enumerate). Two admissions of one
+    /// declaration are equal. The gate does not read the declaration's source.
+    /// Twin of `AdmittedQuery`.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct AdmittedQuery {
+        query: Query,
+    }
+
+    impl AdmittedQuery {
+        /// The declaration the gate admitted. Twin of `AdmittedQuery.Declaration`.
+        pub fn declaration(&self) -> &Query {
+            &self.query
+        }
+
+        /// The declaration the gate admitted, by value.
+        pub fn into_declaration(self) -> Query {
+            self.query
+        }
+    }
+
+    impl Query {
+        /// THE gate, answering the admitted declaration, or the refusal and the
+        /// path to the member at fault ([`Query::admission_fault_at`]). The one
+        /// place an [`AdmittedQuery`] is made. Twin of `QueryRegistry.admitAt`.
+        pub(super) fn admit_at(self) -> Result<AdmittedQuery, (Vec<PathSeg>, QueryError)> {
+            match self.admission_fault_at() {
+                None => Ok(AdmittedQuery { query: self }),
+                Some(fault) => Err(fault),
+            }
+        }
+
+        /// Admit the declaration: the admitted declaration, or the refusal
+        /// [`Query::admission_fault`] names, the one
+        /// [`register`](super::QueryRegistry::register) answers for an id it
+        /// does not hold. It reads the declaration and nothing else, so a host
+        /// runs it before it writes or keys anything. Twin of
+        /// `QueryRegistry.admit`.
+        pub fn admit(self) -> Result<AdmittedQuery, QueryError> {
+            self.admit_at().map_err(|(_, e)| e)
+        }
     }
 }
 
@@ -743,16 +806,29 @@ fn optional_int(c: &Cursor<'_>, name: &str) -> Result<Option<i32>, DecodeError> 
 }
 
 impl Query {
+    fn filter_json(&self) -> JVal {
+        JVal::Arr(self.filter.iter().map(ColumnPredicate::to_json).collect())
+    }
+
+    fn order_json(&self) -> JVal {
+        JVal::Arr(self.order_by.iter().map(SortKey::to_json).collect())
+    }
+}
+
+impl AdmittedQuery {
     /// The declaration's document (`QueryCodec.queryJson`): `timeoutMs`,
-    /// `pageSize`, `where` and `orderBy` omitted when absent or empty.
+    /// `pageSize`, `where` and `orderBy` omitted when absent or empty. It takes
+    /// only an admitted declaration, so it never writes one the gate refuses
+    /// (DECISIONS.md D18.3).
     pub fn encode_json(&self) -> JVal {
+        let q = self.declaration();
         let mut fields = vec![
             ("$type".to_string(), JVal::Str("query".to_string())),
-            ("id".to_string(), JVal::Str(self.id.clone())),
+            ("id".to_string(), JVal::Str(q.id.clone())),
             (
                 "params".to_string(),
                 JVal::Arr(
-                    self.params
+                    q.params
                         .iter()
                         .map(|p| {
                             JVal::Obj(vec![
@@ -766,23 +842,23 @@ impl Query {
             ),
             (
                 "resultSchema".to_string(),
-                field::schema_json(&self.result_schema),
+                field::schema_json(&q.result_schema),
             ),
-            ("effect".to_string(), effect_to_json(&self.effect)),
-            ("source".to_string(), column::encode_json(&self.source)),
+            ("effect".to_string(), effect_to_json(&q.effect)),
+            ("source".to_string(), column::encode_json(&q.source)),
         ];
         let int = |n: i32| JVal::Num(f64::from(n));
-        if let Some(t) = self.timeout_ms {
+        if let Some(t) = q.timeout_ms {
             fields.push(("timeoutMs".to_string(), int(t)));
         }
-        if let Some(p) = self.page_size {
+        if let Some(p) = q.page_size {
             fields.push(("pageSize".to_string(), int(p)));
         }
-        if !self.filter.is_empty() {
-            fields.push(("where".to_string(), self.filter_json()));
+        if !q.filter.is_empty() {
+            fields.push(("where".to_string(), q.filter_json()));
         }
-        if !self.order_by.is_empty() {
-            fields.push(("orderBy".to_string(), self.order_json()));
+        if !q.order_by.is_empty() {
+            fields.push(("orderBy".to_string(), q.order_json()));
         }
         JVal::Obj(fields)
     }
@@ -793,19 +869,12 @@ impl Query {
         render_canonical(&self.encode_json())
     }
 
-    fn filter_json(&self) -> JVal {
-        JVal::Arr(self.filter.iter().map(ColumnPredicate::to_json).collect())
-    }
-
-    fn order_json(&self) -> JVal {
-        JVal::Arr(self.order_by.iter().map(SortKey::to_json).collect())
-    }
-
-    /// Read a declaration from its text (strict JSON, then [`Query::decode_value`]).
-    /// Twin of `QueryCodec.decodeDetailedWith ReadPolicy.Lenient`.
-    pub fn decode(text: &str) -> Result<Query, DecodeError> {
+    /// Read a declaration from its text (strict JSON, then
+    /// [`AdmittedQuery::decode_value`]). Twin of `QueryCodec.decodeDetailedWith
+    /// ReadPolicy.Lenient`.
+    pub fn decode(text: &str) -> Result<AdmittedQuery, DecodeError> {
         let v = decode::parse(text, &JsonLimits::STRICT)?;
-        Query::decode_value(&Cursor::root(&v))
+        AdmittedQuery::decode_value(&Cursor::root(&v))
     }
 
     /// Read a declaration leniently (an unknown member is read past), in the
@@ -814,9 +883,10 @@ impl Query {
     /// `timeoutMs`, `pageSize`, `where` and `orderBy` (each item through the
     /// seams' reader), `source` (any JSON, then the column codec: `OutOfRange` at
     /// `source`), and last the admission gate, whose refusal is `OutOfRange` at
-    /// the member at fault with the registry's sentence (DECISIONS.md D14.3).
-    /// Twin of `QueryCodec.decodeJson`.
-    pub fn decode_value(c: &Cursor<'_>) -> Result<Query, DecodeError> {
+    /// the member at fault with the registry's sentence (DECISIONS.md D14.3): so
+    /// it answers only a declaration the gate admitted (D18.3). Twin of
+    /// `QueryCodec.decodeJson`.
+    pub fn decode_value(c: &Cursor<'_>) -> Result<AdmittedQuery, DecodeError> {
         c.tag("$type", &["query"])?;
         let id = c.field("id")?.string()?.to_string();
         let params = c
@@ -867,18 +937,15 @@ impl Query {
             filter,
             order_by,
         };
-        match q.admission_fault_at() {
-            None => Ok(q),
-            Some((at, e)) => {
-                let mut path = c.path().to_vec();
-                path.extend(at);
-                Err(DecodeError {
-                    code: DecodeCode::OutOfRange,
-                    path,
-                    message: format!("a declaration the registry admits: {}", e.describe()),
-                })
+        q.admit_at().map_err(|(at, e)| {
+            let mut path = c.path().to_vec();
+            path.extend(at);
+            DecodeError {
+                code: DecodeCode::OutOfRange,
+                path,
+                message: format!("a declaration the registry admits: {}", e.describe()),
             }
-        }
+        })
     }
 }
 
@@ -967,7 +1034,7 @@ fn write_payload<W: Write + ?Sized>(c: &Cell, out: &mut W) -> fmt::Result {
     }
 }
 
-impl Query {
+impl AdmittedQuery {
     /// The IDENTITY of one read, what a [`Grant`] for a read is bound to: the
     /// query id, then for a declared filter the fields `""`, `w` and its
     /// canonical text, for a declared order `""`, `o` and its canonical text,
@@ -976,30 +1043,34 @@ impl Query {
     /// NO hash taken. A cell is identified by its tag, so an integer and the
     /// float of the same value are two reads; the page token is not in it, so a
     /// grant for a read covers every page (DECISIONS.md D14.5). Twin of
-    /// `Query.invocationPreimage`.
+    /// `Query.invocationPreimage`, which takes an admitted declaration, as this
+    /// does (D18.3).
     pub fn invocation_identity(&self, args: &[(String, Cell)]) -> String {
-        let shape = Shape::of(self);
+        let q = self.declaration();
+        let shape = Shape::of(q);
         let mut measured = Measured(0);
         shape
-            .write_identity(self, args, &mut measured)
+            .write_identity(q, args, &mut measured)
             .expect("measuring accepts every write");
         let mut identity = String::with_capacity(measured.0);
         shape
-            .write_identity(self, args, &mut identity)
+            .write_identity(q, args, &mut identity)
             .expect("a String accepts every write");
         identity
     }
 
-    /// [`Query::invocation_identity`] written through `out` as it is produced.
-    /// It renders the declaration's filter and order text, the one thing it
-    /// builds; a registry renders that once, when it registers the query, and its
-    /// decision builds nothing (D14.6). `out`'s refusal stops the write.
+    /// [`AdmittedQuery::invocation_identity`] written through `out` as it is
+    /// produced. It renders the declaration's filter and order text, the one
+    /// thing it builds; a registry renders that once, when it registers the
+    /// query, and its decision builds nothing (D14.6). `out`'s refusal stops the
+    /// write.
     pub fn write_invocation_identity<W: Write + ?Sized>(
         &self,
         args: &[(String, Cell)],
         out: &mut W,
     ) -> fmt::Result {
-        Shape::of(self).write_identity(self, args, out)
+        let q = self.declaration();
+        Shape::of(q).write_identity(q, args, out)
     }
 
     /// The grant for exactly this read: what a host mints when an approval is
@@ -1015,7 +1086,8 @@ impl Grant {
     /// with the grant's bytes as it is written, stopping at the first byte that
     /// differs (DECISIONS.md D14.5). The page a read is dispatched for is not in
     /// the identity, so a grant covers every page of the read.
-    pub fn covers_read(&self, q: &Query, args: &[(String, Cell)]) -> bool {
+    pub fn covers_read(&self, q: &AdmittedQuery, args: &[(String, Cell)]) -> bool {
+        let q = q.declaration();
         Shape::of(q).covers(self, q, args)
     }
 }
@@ -1106,13 +1178,14 @@ pub type QueryGate<C = ()> = PolicyGate<C, Query, [(String, Cell)]>;
 /// default-deny on dispatch, and the gates its reads are decided by under a
 /// decision context `C` (`()` for a registry that needs none), through the
 /// decision the capability registry takes. Opaque: [`QueryRegistry::register`]
-/// and its admission gate are the only way a query gets in. Each query's filter
-/// and order text is rendered once, when it is registered, so deciding a read
+/// and its admission gate are the only way a query gets in, and it holds each
+/// as the [`AdmittedQuery`] the gate answered (D18.4). Each query's filter and
+/// order text is rendered once, when it is registered, so deciding a read
 /// builds nothing (D14.6). Twin of `QueryRegistry<'Ctx>` (its denial observers
 /// are not carried: a refusal is the dispatch's `Err`).
 pub struct QueryRegistry<C = ()> {
     /// Held in ordinal id order, the order `enumerate` answers in.
-    entries: Vec<Query>,
+    entries: Vec<AdmittedQuery>,
     /// Each entry's rendered filter and order, at the entry's index.
     shapes: Vec<Shape>,
     /// In the order they run.
@@ -1172,41 +1245,45 @@ impl<C> QueryRegistry<C> {
     }
 
     fn position(&self, id: &str) -> Result<usize, usize> {
-        self.entries.binary_search_by(|q| ordinal_cmp(&q.id, id))
+        self.entries
+            .binary_search_by(|q| ordinal_cmp(&q.declaration().id, id))
     }
 
     /// Register a query: a held id is `DuplicateQuery` (checked first), and the
-    /// admission gate's refusal otherwise ([`Query::admission_fault`]); the
-    /// registry is unchanged on a refusal. Twin of `QueryRegistry.register`.
+    /// admission gate's refusal otherwise ([`Query::admit`]); the registry holds
+    /// the admitted declaration the gate answered, and is unchanged on a
+    /// refusal. Twin of `QueryRegistry.register`.
     pub fn register(&self, q: Query) -> Result<QueryRegistry<C>, QueryError> {
         match self.position(&q.id) {
             Ok(_) => Err(QueryError::DuplicateQuery { id: q.id }),
             Err(at) => {
-                if let Some(e) = q.admission_fault() {
-                    return Err(e);
-                }
+                let q = q.admit()?;
                 let mut next = self.clone();
-                next.shapes.insert(at, Shape::of(&q));
+                next.shapes.insert(at, Shape::of(q.declaration()));
                 next.entries.insert(at, q);
                 Ok(next)
             }
         }
     }
 
-    /// The query registered under exactly `id` (ordinal). Twin of `QueryRegistry.tryFind`.
-    pub fn try_find(&self, id: &str) -> Option<&Query> {
+    /// The query registered under exactly `id` (ordinal), as the gate admitted
+    /// it. Twin of `QueryRegistry.tryFind`.
+    pub fn try_find(&self, id: &str) -> Option<&AdmittedQuery> {
         self.position(id).ok().map(|i| &self.entries[i])
     }
 
-    /// Every query, in ordinal id order whatever the insertion order. Twin of
-    /// `QueryRegistry.enumerate`.
-    pub fn enumerate(&self) -> &[Query] {
+    /// Every query, in ordinal id order whatever the insertion order, as the
+    /// gate admitted it. Twin of `QueryRegistry.enumerate`.
+    pub fn enumerate(&self) -> &[AdmittedQuery] {
         &self.entries
     }
 
     /// The held ids, in id order — what a `NoSuchQuery` names.
     pub fn ids(&self) -> Vec<String> {
-        self.entries.iter().map(|q| q.id.clone()).collect()
+        self.entries
+            .iter()
+            .map(|q| q.declaration().id.clone())
+            .collect()
     }
 
     /// Remove the query under `id`; an id not held is `NoSuchQuery` naming every
@@ -1245,7 +1322,7 @@ impl<C> QueryRegistry<C> {
     /// runs before any gate and any resolver: an id not held is `NoSuchQuery`,
     /// and the arguments are held to [`Query::validate_params`].
     pub fn resolve(&self, id: &str, args: &[(String, Cell)]) -> Result<&Query, QueryError> {
-        let q = &self.entries[self.held(id)?];
+        let q = self.entries[self.held(id)?].declaration();
         q.validate_params(args)?;
         Ok(q)
     }
@@ -1264,7 +1341,7 @@ impl<C> QueryRegistry<C> {
         args: &[(String, Cell)],
     ) -> Result<(&Query, Option<&QueryGate<C>>, PolicyDecision), QueryError> {
         let i = self.held(id)?;
-        let (q, shape) = (&self.entries[i], &self.shapes[i]);
+        let (q, shape) = (self.entries[i].declaration(), &self.shapes[i]);
         q.validate_params(args)?;
         let (decider, decision) = decide_granted(&self.gates, ctx, q, args, || {
             grant.is_some_and(|g| shape.covers(g, q, args))
