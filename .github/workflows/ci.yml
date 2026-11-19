@@ -95,6 +95,13 @@ jobs:
           rustup target add thumbv7em-none-eabihf --toolchain ${{ steps.toolchain.outputs.name }}
           rustc --version && cargo --version
 
+      # The test harness captures a passing test's output, so a leg's count line
+      # (`<family>: <answered> of <stated> vectors`, DECISIONS.md D21) would reach the
+      # log only where run.ps1 passes --nocapture. Uncapturing every run here puts each
+      # family's line in this log at both toolchains, hosted and without std; a phase
+      # that restamps Core's adoption records reads the counts from it.
       - name: Gate (run.ps1 ${{ matrix.gate }})
         shell: pwsh
+        env:
+          RUST_TEST_NOCAPTURE: "1"
         run: ./run.ps1 ${{ matrix.gate }}
