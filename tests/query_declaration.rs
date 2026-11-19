@@ -509,7 +509,6 @@ fn every_vector_of_the_family() {
         counts[i] += 1;
     }
     let total: usize = counts.iter().sum();
-    assert_eq!(total, declared("laws", "queryDeclarationLaws"));
     assert_eq!(
         counts,
         [46, 34, 4, 14, 9],
@@ -521,7 +520,7 @@ fn every_vector_of_the_family() {
         wrong.len(),
         wrong.join("\n")
     );
-    eprintln!("queryDeclarationLaws: {total} of {total} vectors ({CASES:?} = {counts:?})");
+    answered_by_case("laws", "queryDeclarationLaws", &CASES, &counts);
 }
 
 /// `referenceOnly` names which MODEL answers, not whether a host must: the

@@ -124,6 +124,18 @@ pub fn answered_across(dir: &str, family: &str, shares: &[(&str, usize)]) {
     judge(dir, family, total, format!(" ({})", parts.join(", ")));
 }
 
+/// The line for a family a leg answers case by case: the number answered is the
+/// sum of the cases' counts, and the line names each case's count in the
+/// family's case order (`queryDeclarationLaws`, D17's parenthesis).
+pub fn answered_by_case(dir: &str, family: &str, cases: &[&str], counts: &[usize]) {
+    judge(
+        dir,
+        family,
+        counts.iter().sum(),
+        format!(" ({cases:?} = {counts:?})"),
+    );
+}
+
 fn judge(dir: &str, family: &str, answered: usize, detail: String) {
     let stated = declared(dir, family);
     // One write, the newline included, so no test running beside this one can
