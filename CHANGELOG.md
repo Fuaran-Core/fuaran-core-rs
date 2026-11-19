@@ -3,6 +3,18 @@
 Every change to the crate's public API, newest first. Each entry names the Core commit the crate certifies against
 (`core-pin.json`), and whether that Core version is released.
 
+## 0.0.7-alpha.1, unchanged — 2026-11-19 — the tests print each family's count, at Core `6973c334` (`0.44.0`, released)
+
+The tests and the workflow change; the public API does not, and no answer does. The version stays `0.0.7-alpha.1`
+(D11.8: no public item changed). DECISIONS.md D21.
+
+Every leg that answers a family prints one line, `<family>: <answered> of <stated> vectors`, and fails when the number
+it answered differs from the number the family's manifest row states. A family answered by more than one binary
+(`codecRefusals`, `decimal`) prints once, from the binary that reads its row, naming each binary's share. CI runs the
+gate uncaptured (`RUST_TEST_NOCAPTURE`), so every family's line reaches its log at exactly 1.85.0 and at stable,
+hosted and without `std`; a restamp of Core's adoption records of this crate reads the counts from there. Every count
+at this pin equals Core's record.
+
 ## 0.0.7-alpha.1, unchanged — 2026-11-19 — at Core `6973c334` (`0.44.0`, released)
 
 Follows Core `6973c334731c5506fe3f844a2f62514fe11ebb61`, version `0.44.0`, **released**: the commit Core's tag

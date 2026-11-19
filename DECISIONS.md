@@ -115,6 +115,8 @@ this phase's, and both are named under the write-up's `SUCCESSOR`.
 each one it does not, with the reason (`encodingProfile`, `identity`, `queryGrantLaws` at Core `0.43.0`).*
 *Amended by D14 (2026-11-16): `queryGrantLaws` is answered (`tests/query_grant.rs`), and the rule that a typed seam
 value waits for a consumer no longer holds for the query declaration (D14.1).*
+*Amended by D21 (2026-11-19): each leg also prints its family's count in one line, which the CI log carries; a
+restamp of the reference's records reads the counts from that log.*
 
 Phase 564 extends the certification from five families to every family the reference emits under
 `conformance/`, at the Core commit `core-pin.json` names. The counts are the reference's to record: each family's
@@ -1509,3 +1511,64 @@ stable: every family the crate answered at `66ff009e`, with the counts it read t
 `seamRefusals` 143, `queryGrantLaws` 19, `capabilityLaws` 144, `capabilityDocumentLaws` 18 and `capabilityGateLaws` 41
 among them), and every row of the allocation table as it was. `tests/families.rs` names the same two families as
 before, `encodingProfile` and `identity`.
+
+## D21 — 2026-11-19 — every leg prints its family's count in one line, the CI log carries every line, and a restamp of the reference's records reads the counts from that log
+
+Phase 701. The reference records this crate's count for each family it answers (its manifests' `fuaran-core-rs`
+adoption records, D8), and a phase that restamps those records needs the count each leg answered, read off a run
+rather than restated by hand. At Core `6973c334` the legs asserted their counts but printed one of them:
+`queryDeclarationLaws`' line (D17), and it reached the CI log only from the run without `std`, because the test
+harness captures a passing test's output and `run.ps1` uncaptures only that run. Of 23 answered families, one count
+reached the log (run 44511531248, on `0460d31`).
+
+**D21.1 — the line.** Every leg that answers a family ends in one line,
+
+    <family>: <answered> of <stated> vectors
+
+the family's id, the number of vectors the leg answered, and the number the family's row in its manifest states. It
+is `queryDeclarationLaws`' shape (D17), whose own line keeps its per-case parenthesis. The line is printed and then
+judged: the leg fails when the two numbers differ, so a red log shows both. It is written by `answered` in
+`tests/common`, in one write with its newline, so a test running beside it cannot split it; the harness writes its
+own `test <name> ... ` before a result without a newline, so a reader finds a line by its pattern, not at a line's
+start. Where a leg answers every vector of its file, the check of the file's length against the manifest that stood
+before the loop said what the line now says, and it is gone; where a leg answers part of its file (`codecRefusals`,
+`decimal`), and in the capability legs' shape tests, it stays.
+
+**D21.2 — a family answered by more than one binary prints once,** from the binary that reads its manifest row
+(D8's table): `codecRefusals` from `conformance.rs` (its `json` vectors 56, `columnar.rs`' `column` vectors 26,
+`propagation_forms.rs`' `profile` vectors 19) and `decimal` from `conformance.rs` (53, and `columnar.rs`' codec and
+aggregate vectors 22). Its line sums and names the shares,
+
+    codecRefusals: 101 of 101 vectors (conformance 56, columnar 26, propagation_forms 19)
+
+A share answered in another binary is a named constant in `tests/common`, and the binary that answers it asserts it
+ran exactly that many, so the sum holds exactly when every binary is green; a binary cannot read another's count at
+run time. `seamRefusals` prints from `seams.rs`; the seam vectors `query.rs` re-checks inside a declaration are a
+subset it does not count. `capabilityGateLaws` is answered twice in one binary (the file's labels, and integer
+contexts); it prints once, from the run under the file's labels. The capability leg's per-case tests become one
+test per family, each case still asserting its count (`capabilityLaws` six cases, `capabilityDocumentLaws` four).
+
+**D21.3 — the log.** The workflow's gate step sets `RUST_TEST_NOCAPTURE`, so every run prints its lines, in both
+jobs: at exactly 1.85.0 (D16) and at stable, `cargo test` hosted (all 23 families), the premise probes in release
+(five), and the capability and query legs without `std` (five). `run.ps1` is not changed, and a local run stays
+captured unless its caller sets the variable. The rest of an uncaptured run reaches the log too: the allocation
+tables (already uncaptured), `families.rs`' `not answered:` lines, and the compile-fail doc tests' expected compiler
+errors, each followed by its `compile fail ... ok`.
+
+**D21.4 — a restamp reads the counts from this log.** A phase that restamps the reference's adoption records of this
+crate takes each family's count from the lines of a green CI run on the commit it records, at both toolchains, and
+not from a restatement here, in `CHANGELOG.md` or in a phase's notes. At `6973c334` every line reads `N of N`, equal
+to the reference's record of this crate for every family, at both compilers, hosted, in release and without `std`.
+
+**D21.5 — the version does not move.** The tests, the workflow and this record change; no public item is added,
+removed or changed. By D11.8's rule `0.0.7-alpha.1` stays, and `Cargo.toml` does not move. No crate release, tag or
+publish.
+
+*Rejected:*
+- **Printing outside the harness's capture** (writing to the process's standard error directly), so the lines reach
+  the log without any setting. It leans on how the harness captures, which is not a contract, and it would print in
+  every local run as well.
+- **Each binary printing its own share of a split family.** Three lines for `codecRefusals`, none of them the
+  family's count, so the reader sums by hand: the restatement D21.4 rules out.
+- **Changing `run.ps1` to pass `--nocapture` to each run.** The workflow's environment does it without changing the
+  gate the repository's entry point runs.
