@@ -11,7 +11,7 @@ The tests and the records change; the public API does not, and no answer or coun
 The query declaration leg's line, `queryDeclarationLaws: 107 of 107 vectors (...)`, is now written as one string,
 once, through the helper every other leg uses (`answered_by_case` in `tests/common`), so an uncaptured log cannot
 carry it in pieces; its text is unchanged. Core's records of this crate that name an older kit (`0.41.0`, `0.43.0`)
-stay as they are: by Core's D272 a record moves when a family's vectors or the crate's answers change, not when the
+stay as they are: by Core's D273 a record moves when a family's vectors or the crate's answers change, not when the
 pin moves over unchanged vectors, and the current count of each family is its line in the CI log.
 
 ## 0.0.7-alpha.1, unchanged — 2026-11-19 — the tests print each family's count, at Core `6973c334` (`0.44.0`, released)

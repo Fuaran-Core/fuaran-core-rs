@@ -1573,7 +1573,7 @@ publish.
 - **Changing `run.ps1` to pass `--nocapture` to each run.** The workflow's environment does it without changing the
   gate the repository's entry point runs.
 
-## D22 — 2026-11-19 — the query declaration leg writes its count line once, through the shared helper; the reference's records of this crate move by its D272, not at each pin move
+## D22 — 2026-11-19 — the query declaration leg writes its count line once, through the shared helper; the reference's records of this crate move by its D273, not at each pin move
 
 Phase 703. D21.1 put every leg's count line through one write in `tests/common`, so that a test running beside it
 cannot split the line in an uncaptured log. The query declaration leg kept its own line (D17), printed with one
@@ -1607,7 +1607,7 @@ only place a leg writes a count line, and every leg reaches it through `answered
 
 **D22.4 — the reference's records of this crate.** Eleven of the reference's 23 records of this crate name a kit
 older than the pin (`0.41.0` or `0.43.0`), with the counts the legs print at `0.44.0`. They are not stale and do not
-move: by the reference's D272, a record moves at first adoption, when the family's vectors change and the crate
+move: by the reference's D273, a record moves at first adoption, when the family's vectors change and the crate
 measures them, or when what a leg answers changes, and never when the pin moves over unchanged vectors or a leg
 changes how it reports (D21, this entry). A `kitVersion` older than the pin reads that the family has not changed
 since; the current count is the leg's line in this crate's CI log. D21.4 still says where a restamp reads its counts
