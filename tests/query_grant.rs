@@ -152,7 +152,6 @@ fn every_vector_of_the_family() {
             .position(|c| *c == case)
             .expect("a case the leg answers")] += 1;
     }
-    let total: usize = counts.iter().sum();
-    assert_eq!(total, declared("laws", "queryGrantLaws"));
+    answered("laws", "queryGrantLaws", counts.iter().sum());
     assert_eq!(counts, [11, 8], "the vectors of each case, in {CASES:?}");
 }

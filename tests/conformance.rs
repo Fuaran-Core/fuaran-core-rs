@@ -85,6 +85,7 @@ fn codec_refusals_json_vectors() {
     }
     // The column vectors run in tests/columnar.rs (26) and the profile vectors in
     // tests/propagation_forms.rs (19): the three legs are the family's 101.
+    answered("refusals", "codecRefusals", ran);
     assert_eq!(ran, 56, "the json vectors run");
 }
 
@@ -215,6 +216,7 @@ fn decode_rejects_vectors() {
         }
         ran += 1;
     }
+    answered("decode", "decodeRejects", ran);
     assert_eq!(ran, 47);
 }
 
@@ -249,11 +251,12 @@ fn decimal_law_vectors() {
         assert_eq!(answer, want, "{id}");
         ran += 1;
     }
+    assert_eq!(vectors(&doc).len(), declared("laws", "decimal"));
+    answered("laws", "decimal", ran);
     assert_eq!(
         ran, 53,
         "the canonical, compare, add and toFloat vectors run"
     );
-    assert_eq!(vectors(&doc).len(), declared("laws", "decimal"));
 }
 
 // ─── escape/string-escape.json — the one string spelling ─────────────────────
@@ -297,6 +300,7 @@ fn string_escape_lines() {
         }
         ran += 1;
     }
+    answered("escape", "stringEscape", ran);
     assert_eq!(ran, 38);
 }
 
@@ -306,6 +310,7 @@ fn string_escape_lines() {
 fn skeleton_apply_vectors() {
     let doc = read("apply/skeleton-apply.json");
     assert_eq!(vectors(&doc).len(), declared("apply", "skeletonApply"));
+    let mut ran = 0;
     for v in vectors(&doc) {
         let (id, input, expected) = (s(v, "id"), get(v, "input"), get(v, "expected"));
         let tree = tree_of(s(input, "tree"));
@@ -319,7 +324,9 @@ fn skeleton_apply_vectors() {
             ("reject", Err(r)) => assert_eq!(r.encode(), s(expected, "rejection"), "{id}"),
             (want, got) => panic!("{id}: expected {want}, got {got:?}"),
         }
+        ran += 1;
     }
+    answered("apply", "skeletonApply", ran);
 }
 
 // ─── chain/skeleton-chain.json — the op-stream chain ─────────────────────────
@@ -339,6 +346,7 @@ fn assert_anchor(a: &Anchor, want: &JVal, id: &str) {
 fn skeleton_chain_vectors() {
     let doc = read("chain/skeleton-chain.json");
     assert_eq!(vectors(&doc).len(), declared("chain", "skeletonChain"));
+    let mut ran = 0;
     for v in vectors(&doc) {
         let (id, input, expected) = (s(v, "id"), get(v, "input"), get(v, "expected"));
         let anchor = anchor_of(get(input, "anchor"));
@@ -382,7 +390,9 @@ fn skeleton_chain_vectors() {
             }
             other => panic!("{id}: unknown case {other}"),
         }
+        ran += 1;
     }
+    answered("chain", "skeletonChain", ran);
 }
 
 // ─── dag/skeleton-dag.json — the op-DAG ──────────────────────────────────────
@@ -395,6 +405,7 @@ fn apply_tree(op: &Op, t: Node) -> Result<Node, ops::Rejection> {
 fn skeleton_dag_vectors() {
     let doc = read("dag/skeleton-dag.json");
     assert_eq!(vectors(&doc).len(), declared("dag", "skeletonDag"));
+    let mut ran = 0;
     for v in vectors(&doc) {
         let (id, input, expected) = (s(v, "id"), get(v, "input"), get(v, "expected"));
         match s(v, "case") {
@@ -415,7 +426,9 @@ fn skeleton_dag_vectors() {
             }
             other => panic!("{id}: unknown case {other}"),
         }
+        ran += 1;
     }
+    answered("dag", "skeletonDag", ran);
 }
 
 /// A DAG holding the input's `nodes` under their recorded ids, not re-hashed.

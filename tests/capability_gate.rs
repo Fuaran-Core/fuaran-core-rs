@@ -233,6 +233,7 @@ fn answer<X>(r: &CapabilityRegistry<X>, ctx_of: &dyn Fn(&str) -> X, v: &JVal) ->
 }
 
 /// Decide every vector under contexts of type `X`; the count of each case run.
+/// The family's line is printed once, from the run under the file's own labels.
 fn certify<X>(ctx_of: &dyn Fn(&str) -> X) -> Vec<usize>
 where
     X: PartialEq + Send + Sync + 'static,
@@ -253,10 +254,6 @@ where
             .unwrap_or_else(|| panic!("{id}: a case outside the family"));
         ran[at] += 1;
     }
-    assert_eq!(
-        ran.iter().sum::<usize>(),
-        declared("laws", "capabilityGateLaws")
-    );
     ran
 }
 
@@ -278,6 +275,7 @@ fn the_family_is_the_four_cases_its_manifest_counts() {
 #[test]
 fn every_vector_under_the_files_context_labels() {
     let ran = certify(&|label: &str| label.to_string());
+    answered("laws", "capabilityGateLaws", ran.iter().sum());
     assert_eq!(ran, [9, 5, 20, 7]);
 }
 

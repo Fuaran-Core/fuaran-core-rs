@@ -9,7 +9,8 @@
 //!
 //! Each family's size is its row in `laws/manifest.json` (for `capabilityLaws`
 //! also the file's own `iterations` times the twelve vectors each iteration
-//! draws); every leg asserts the exact count of the case it ran.
+//! draws); each family's leg asserts the exact count of every case it ran and
+//! prints the family's line (DECISIONS.md D21).
 
 mod common;
 
@@ -93,19 +94,10 @@ fn run_validate_args(d: &JVal) -> usize {
     ran
 }
 
-#[test]
-fn validate_args() {
-    let d = doc();
-    let ran = run_validate_args(&d);
-    assert_eq!(ran, 5 * iterations(&d));
-    assert_eq!(ran, 60);
-}
-
-#[test]
-fn invocation_key() {
-    let d = doc();
+/// Every `invocationKey` vector of `d`, answered; the count it ran.
+fn run_invocation_key(d: &JVal) -> usize {
     let mut ran = 0;
-    for v in of_case(&d, "invocationKey") {
+    for v in of_case(d, "invocationKey") {
         let id = s(v, "id");
         let c = cap_of(id, s(get(v, "input"), "capability"));
         let args = args_of(v);
@@ -134,8 +126,7 @@ fn invocation_key() {
         );
         ran += 1;
     }
-    assert_eq!(ran, iterations(&d));
-    assert_eq!(ran, 12);
+    ran
 }
 
 /// Every `declarationRoundTrip` vector of `d`, answered; the count it ran.
@@ -156,19 +147,10 @@ fn run_declaration_round_trip(d: &JVal) -> usize {
     ran
 }
 
-#[test]
-fn declaration_round_trip() {
-    let d = doc();
-    let ran = run_declaration_round_trip(&d);
-    assert_eq!(ran, iterations(&d));
-    assert_eq!(ran, 12);
-}
-
-#[test]
-fn registry_enumerate() {
-    let d = doc();
+/// Every `registryEnumerate` vector of `d`, answered; the count it ran.
+fn run_registry_enumerate(d: &JVal) -> usize {
     let mut ran = 0;
-    for v in of_case(&d, "registryEnumerate") {
+    for v in of_case(d, "registryEnumerate") {
         let id = s(v, "id");
         let mut r = CapabilityRegistry::new();
         let decls = str_items(get(v, "input"), "declarations");
@@ -187,8 +169,7 @@ fn registry_enumerate() {
         assert_eq!(reversed, r, "{id}: insertion order does not matter");
         ran += 1;
     }
-    assert_eq!(ran, iterations(&d));
-    assert_eq!(ran, 12);
+    ran
 }
 
 /// A refused declaration in the file's words: its decode code and the path to
@@ -202,11 +183,10 @@ fn refusal(e: &fuaran_core::decode::DecodeError) -> String {
     ]))
 }
 
-#[test]
-fn declaration_refused() {
-    let d = doc();
+/// Every `declarationRefused` vector of `d`, answered; the count it ran.
+fn run_declaration_refused(d: &JVal) -> usize {
     let mut ran = 0;
-    for v in of_case(&d, "declarationRefused") {
+    for v in of_case(d, "declarationRefused") {
         let id = s(v, "id");
         let e = match Capability::decode(s(get(v, "input"), "declaration")) {
             Err(e) => e,
@@ -219,8 +199,7 @@ fn declaration_refused() {
         );
         ran += 1;
     }
-    assert_eq!(ran, 2 * iterations(&d));
-    assert_eq!(ran, 24);
+    ran
 }
 
 /// A type check's verdict in the file's words: accept, or the one refusal the
@@ -269,12 +248,24 @@ fn run_pipeline_type_check(d: &JVal) -> usize {
     ran
 }
 
+/// The family's six cases, each answered and counted (`validateArgs`,
+/// `invocationKey`, `declarationRoundTrip`, `registryEnumerate`,
+/// `declarationRefused`, `pipelineTypeCheck`), and the family's line.
 #[test]
-fn pipeline_type_check() {
+fn every_vector_of_the_family() {
     let d = doc();
-    let ran = run_pipeline_type_check(&d);
-    assert_eq!(ran, 2 * iterations(&d));
-    assert_eq!(ran, 24);
+    let k = iterations(&d);
+    let ran = [
+        run_validate_args(&d),
+        run_invocation_key(&d),
+        run_declaration_round_trip(&d),
+        run_registry_enumerate(&d),
+        run_declaration_refused(&d),
+        run_pipeline_type_check(&d),
+    ];
+    answered("laws", "capabilityLaws", ran.iter().sum());
+    assert_eq!(ran, [5 * k, k, k, k, 2 * k, 2 * k], "per iteration");
+    assert_eq!(ran, [60, 12, 12, 12, 24, 24], "the vectors of each case");
 }
 
 // ─── laws/capability-document-laws.json — the document value space ──────────
@@ -316,16 +307,11 @@ fn the_document_family_is_the_four_cases_its_manifest_counts() {
     );
 }
 
-#[test]
-fn document_validate_args() {
-    assert_eq!(run_validate_args(&document_doc()), 9);
-}
-
-#[test]
-fn document_invocation_key() {
-    let d = document_doc();
+/// Every `invocationKey` vector of the document family, answered; the count it
+/// ran. A document key vector carries no `capturedValue`.
+fn run_document_invocation_key(d: &JVal) -> usize {
     let mut ran = 0;
-    for v in of_case(&d, "invocationKey") {
+    for v in of_case(d, "invocationKey") {
         let id = s(v, "id");
         let c = cap_of(id, s(get(v, "input"), "capability"));
         let args = args_of(v);
@@ -342,17 +328,22 @@ fn document_invocation_key() {
         );
         ran += 1;
     }
-    assert_eq!(ran, 2);
+    ran
 }
 
+/// The document family's four cases, each answered and counted, and the
+/// family's line.
 #[test]
-fn document_declaration_round_trip() {
-    assert_eq!(run_declaration_round_trip(&document_doc()), 2);
-}
-
-#[test]
-fn document_pipeline_type_check() {
-    assert_eq!(run_pipeline_type_check(&document_doc()), 5);
+fn every_vector_of_the_document_family() {
+    let d = document_doc();
+    let ran = [
+        run_validate_args(&d),
+        run_document_invocation_key(&d),
+        run_declaration_round_trip(&d),
+        run_pipeline_type_check(&d),
+    ];
+    answered("laws", "capabilityDocumentLaws", ran.iter().sum());
+    assert_eq!(ran, [9, 2, 2, 5], "the vectors of each case");
 }
 
 // ─── The document space, beyond the vectors ──────────────────────────────────

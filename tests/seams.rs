@@ -57,14 +57,13 @@ fn seam_refusals() {
         }
         ran += 1;
     }
-    assert_eq!(ran, declared("refusals", "seamRefusals"));
     assert!(
         wrong.is_empty(),
         "{} of {ran} vectors answered differently:\n{}",
         wrong.len(),
         wrong.join("\n")
     );
-    eprintln!("seamRefusals: {ran} of {ran} vectors");
+    answered("refusals", "seamRefusals", ran);
 }
 
 #[test]

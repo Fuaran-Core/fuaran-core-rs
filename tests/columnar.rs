@@ -190,5 +190,5 @@ fn field_laws() {
         ran += 1;
     }
     assert_eq!(ran, vectors(&doc).len(), "every field vector runs");
-    assert_eq!(ran, declared("laws", "fieldLaws"), "the field vectors run");
+    answered("laws", "fieldLaws", ran);
 }

@@ -104,6 +104,20 @@ pub fn vectors(doc: &JVal) -> &[JVal] {
     arr(doc, "vectors")
 }
 
+/// The leg's one line for a family it answers (DECISIONS.md D21):
+/// `<family>: <answered> of <stated> vectors`, the number of vectors the leg
+/// answered and the number the family's row in `<dir>/manifest.json` states.
+/// The line is printed before it is judged, so a red log shows both numbers;
+/// the leg fails when they differ.
+pub fn answered(dir: &str, family: &str, answered: usize) {
+    let stated = declared(dir, family);
+    eprintln!("{family}: {answered} of {stated} vectors");
+    assert_eq!(
+        answered, stated,
+        "{dir}/{family}: the leg answered {answered} vectors where the manifest states {stated}"
+    );
+}
+
 /// A refusal's path as the vectors write it: a member by its name, an item by
 /// its index.
 pub fn path_json(e: &DecodeError) -> Vec<JVal> {

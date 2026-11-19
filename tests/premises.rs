@@ -3,7 +3,8 @@
 //! reference's claims ladder names, and reproducing every vector discharges that
 //! premise on this crate's own runtime (the reference's docs/host-premises.md).
 //!
-//! Each leg asserts it ran exactly the count the family's manifest declares.
+//! Each leg asserts it ran exactly the count the family's manifest declares, and
+//! prints the family's line (DECISIONS.md D21).
 
 mod common;
 
@@ -34,11 +35,14 @@ fn refusal_class(r: &JsonRefusal) -> String {
 }
 
 /// The premise families' manifest is `premises/manifest.json`.
-fn family(file: &str, id: &str) -> (JVal, usize) {
+fn family(file: &str, id: &str) -> JVal {
     let doc = read(&format!("premises/{file}"));
-    let want = declared("premises", id);
-    assert_eq!(vectors(&doc).len(), want, "{file}: the manifest's count");
-    (doc, want)
+    assert_eq!(
+        vectors(&doc).len(),
+        declared("premises", id),
+        "{file}: the manifest's count"
+    );
+    doc
 }
 
 // ─── premises/string-model.json ──────────────────────────────────────────────
@@ -63,7 +67,7 @@ fn utf8_of_units(units: &[u16]) -> Result<Vec<u8>, (usize, u16)> {
 
 #[test]
 fn premise_string_model() {
-    let (doc, want) = family("string-model.json", "premiseStringModel");
+    let doc = family("string-model.json", "premiseStringModel");
     let mut ran = 0;
     for v in vectors(&doc) {
         let (id, expected) = (s(v, "id"), get(v, "expected"));
@@ -100,14 +104,14 @@ fn premise_string_model() {
         }
         ran += 1;
     }
-    assert_eq!(ran, want);
+    answered("premises", "premiseStringModel", ran);
 }
 
 // ─── premises/float-digits.json ──────────────────────────────────────────────
 
 #[test]
 fn premise_float_digits() {
-    let (doc, want) = family("float-digits.json", "premiseFloatDigits");
+    let doc = family("float-digits.json", "premiseFloatDigits");
     let mut ran = 0;
     for v in vectors(&doc) {
         let id = s(v, "id");
@@ -124,14 +128,14 @@ fn premise_float_digits() {
         assert_eq!(back.to_bits(), wanted, "{id}: read back");
         ran += 1;
     }
-    assert_eq!(ran, want);
+    answered("premises", "premiseFloatDigits", ran);
 }
 
 // ─── premises/int53.json ─────────────────────────────────────────────────────
 
 #[test]
 fn premise_int53() {
-    let (doc, want) = family("int53.json", "premiseInt53");
+    let doc = family("int53.json", "premiseInt53");
     let mut ran = 0;
     for v in vectors(&doc) {
         let (id, expected) = (s(v, "id"), get(v, "expected"));
@@ -147,14 +151,14 @@ fn premise_int53() {
         }
         ran += 1;
     }
-    assert_eq!(ran, want);
+    answered("premises", "premiseInt53", ran);
 }
 
 // ─── premises/sha256.json ────────────────────────────────────────────────────
 
 #[test]
 fn premise_sha256() {
-    let (doc, want) = family("sha256.json", "premiseSha256");
+    let doc = family("sha256.json", "premiseSha256");
     let mut ran = 0;
     for v in vectors(&doc) {
         let (id, input) = (s(v, "id"), get(v, "input"));
@@ -166,7 +170,7 @@ fn premise_sha256() {
         );
         ran += 1;
     }
-    assert_eq!(ran, want);
+    answered("premises", "premiseSha256", ran);
 }
 
 // ─── premises/recursion-depth.json ───────────────────────────────────────────
@@ -182,7 +186,7 @@ const PROBE_STACK_BYTES: usize = 64 * 1024;
 
 #[test]
 fn premise_recursion_depth() {
-    let (doc, want) = family("recursion-depth.json", "premiseRecursionDepth");
+    let doc = family("recursion-depth.json", "premiseRecursionDepth");
     let (ran, accepted) = std::thread::Builder::new()
         .stack_size(PROBE_STACK_BYTES)
         .spawn(move || {
@@ -220,6 +224,6 @@ fn premise_recursion_depth() {
         .expect("the probe thread starts")
         .join()
         .expect("the depth probes ran without exhausting the stack");
-    assert_eq!(ran, want);
+    answered("premises", "premiseRecursionDepth", ran);
     drop(accepted);
 }

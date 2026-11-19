@@ -207,8 +207,8 @@ fn skeleton_merge_vectors() {
         }
         ran += 1;
     }
+    answered("merge", "skeletonMerge", ran);
     assert_eq!(ran, 13);
-    assert_eq!(ran, declared("merge", "skeletonMerge"));
 }
 
 // ─── diff/skeleton-diff.json — the content-aware diff ────────────────────────
@@ -257,6 +257,6 @@ fn skeleton_diff_vectors() {
         }
         ran += 1;
     }
+    answered("diff", "skeletonDiff", ran);
     assert_eq!(ran, 14);
-    assert_eq!(ran, declared("diff", "skeletonDiff"));
 }

@@ -232,11 +232,7 @@ fn propagation_law_vectors() {
         }
         ran += 1;
     }
-    assert_eq!(
-        ran,
-        declared("laws", "propagationLaws"),
-        "every propagation vector runs"
-    );
+    answered("laws", "propagationLaws", ran);
     assert_eq!(ran, drawn, "the file's declared iterations");
 }
 
@@ -268,11 +264,7 @@ fn canonical_form_law_vectors() {
         );
         ran += 1;
     }
-    assert_eq!(
-        ran,
-        declared("laws", "canonicalFormLaws"),
-        "every canonical-form vector runs"
-    );
+    answered("laws", "canonicalFormLaws", ran);
 }
 
 // ─── refusals/codec-refusals.json — the profile vectors ──────────────────────
