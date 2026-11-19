@@ -12,7 +12,6 @@ use fuaran_core::seam::{self, Reading, Slot};
 fn seam_refusals() {
     let doc = read("refusals/seam-refusals.json");
     let all = vectors(&doc);
-    assert_eq!(all.len(), declared("refusals", "seamRefusals"));
 
     // Every vector is answered before the leg judges, so a red names each vector
     // answered differently, not only the first.

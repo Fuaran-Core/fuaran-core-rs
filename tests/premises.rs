@@ -34,17 +34,6 @@ fn refusal_class(r: &JsonRefusal) -> String {
     }
 }
 
-/// The premise families' manifest is `premises/manifest.json`.
-fn family(file: &str, id: &str) -> JVal {
-    let doc = read(&format!("premises/{file}"));
-    assert_eq!(
-        vectors(&doc).len(),
-        declared("premises", id),
-        "{file}: the manifest's count"
-    );
-    doc
-}
-
 // ─── premises/string-model.json ──────────────────────────────────────────────
 
 /// The crate's strings are UTF-8 (`str`), so a sequence of UTF-16 code units
@@ -67,7 +56,7 @@ fn utf8_of_units(units: &[u16]) -> Result<Vec<u8>, (usize, u16)> {
 
 #[test]
 fn premise_string_model() {
-    let doc = family("string-model.json", "premiseStringModel");
+    let doc = read("premises/string-model.json");
     let mut ran = 0;
     for v in vectors(&doc) {
         let (id, expected) = (s(v, "id"), get(v, "expected"));
@@ -111,7 +100,7 @@ fn premise_string_model() {
 
 #[test]
 fn premise_float_digits() {
-    let doc = family("float-digits.json", "premiseFloatDigits");
+    let doc = read("premises/float-digits.json");
     let mut ran = 0;
     for v in vectors(&doc) {
         let id = s(v, "id");
@@ -135,7 +124,7 @@ fn premise_float_digits() {
 
 #[test]
 fn premise_int53() {
-    let doc = family("int53.json", "premiseInt53");
+    let doc = read("premises/int53.json");
     let mut ran = 0;
     for v in vectors(&doc) {
         let (id, expected) = (s(v, "id"), get(v, "expected"));
@@ -158,7 +147,7 @@ fn premise_int53() {
 
 #[test]
 fn premise_sha256() {
-    let doc = family("sha256.json", "premiseSha256");
+    let doc = read("premises/sha256.json");
     let mut ran = 0;
     for v in vectors(&doc) {
         let (id, input) = (s(v, "id"), get(v, "input"));
@@ -186,7 +175,7 @@ const PROBE_STACK_BYTES: usize = 64 * 1024;
 
 #[test]
 fn premise_recursion_depth() {
-    let doc = family("recursion-depth.json", "premiseRecursionDepth");
+    let doc = read("premises/recursion-depth.json");
     let (ran, accepted) = std::thread::Builder::new()
         .stack_size(PROBE_STACK_BYTES)
         .spawn(move || {

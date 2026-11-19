@@ -110,32 +110,32 @@ pub fn vectors(doc: &JVal) -> &[JVal] {
 /// The line is printed before it is judged, so a red log shows both numbers;
 /// the leg fails when they differ.
 pub fn answered(dir: &str, family: &str, answered: usize) {
-    let stated = declared(dir, family);
-    eprintln!("{family}: {answered} of {stated} vectors");
-    assert_eq!(
-        answered, stated,
-        "{dir}/{family}: the leg answered {answered} vectors where the manifest states {stated}"
-    );
+    judge(dir, family, answered, String::new());
 }
 
 /// The line for a family answered by more than one binary, printed once, by the
 /// binary that reads its manifest row: the number answered is the sum of every
-/// binary's share, each named. A share answered elsewhere is one of the
-/// constants below, which the answering binary asserts it ran, so the sum holds
-/// exactly when every binary is green.
+/// binary's share, each named after it. A share answered elsewhere is one of
+/// the constants below, which the answering binary asserts it ran, so the sum
+/// holds exactly when every binary is green.
 pub fn answered_across(dir: &str, family: &str, shares: &[(&str, usize)]) {
-    let total: usize = shares.iter().map(|(_, k)| k).sum();
+    let total = shares.iter().map(|(_, k)| k).sum();
     let parts: Vec<String> = shares.iter().map(|(leg, k)| format!("{leg} {k}")).collect();
+    judge(dir, family, total, format!(" ({})", parts.join(", ")));
+}
+
+fn judge(dir: &str, family: &str, answered: usize, detail: String) {
     let stated = declared(dir, family);
-    eprintln!(
-        "{family}: {total} of {stated} vectors ({})",
-        parts.join(", ")
+    // One write, the newline included, so no test running beside this one can
+    // split the line when the harness does not capture it.
+    let line = format!(
+        "{family}: {answered} of {stated} vectors{detail}
+"
     );
+    eprint!("{line}");
     assert_eq!(
-        total,
-        stated,
-        "{dir}/{family}: the legs answered {total} vectors ({}) where the manifest states {stated}",
-        parts.join(", ")
+        answered, stated,
+        "{dir}/{family}: answered {answered} vectors{detail} where the manifest states {stated}"
     );
 }
 

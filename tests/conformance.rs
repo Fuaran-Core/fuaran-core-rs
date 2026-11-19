@@ -202,7 +202,6 @@ fn path_json(path: &[PathSeg]) -> String {
 #[test]
 fn decode_rejects_vectors() {
     let doc = read("decode/decode-rejects.json");
-    assert_eq!(vectors(&doc).len(), declared("decode", "decodeRejects"));
     let empty = JVal::Obj(vec![]);
     let mut ran = 0;
     for v in vectors(&doc) {
@@ -321,7 +320,6 @@ fn string_escape_lines() {
 #[test]
 fn skeleton_apply_vectors() {
     let doc = read("apply/skeleton-apply.json");
-    assert_eq!(vectors(&doc).len(), declared("apply", "skeletonApply"));
     let mut ran = 0;
     for v in vectors(&doc) {
         let (id, input, expected) = (s(v, "id"), get(v, "input"), get(v, "expected"));
@@ -357,7 +355,6 @@ fn assert_anchor(a: &Anchor, want: &JVal, id: &str) {
 #[test]
 fn skeleton_chain_vectors() {
     let doc = read("chain/skeleton-chain.json");
-    assert_eq!(vectors(&doc).len(), declared("chain", "skeletonChain"));
     let mut ran = 0;
     for v in vectors(&doc) {
         let (id, input, expected) = (s(v, "id"), get(v, "input"), get(v, "expected"));
@@ -416,7 +413,6 @@ fn apply_tree(op: &Op, t: Node) -> Result<Node, ops::Rejection> {
 #[test]
 fn skeleton_dag_vectors() {
     let doc = read("dag/skeleton-dag.json");
-    assert_eq!(vectors(&doc).len(), declared("dag", "skeletonDag"));
     let mut ran = 0;
     for v in vectors(&doc) {
         let (id, input, expected) = (s(v, "id"), get(v, "input"), get(v, "expected"));
