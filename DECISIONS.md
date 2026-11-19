@@ -1442,9 +1442,12 @@ and the captured verbs journal that refusal, never a completion (D267.4, D267.5)
 (D14.6) resolves the id, validates the arguments, decides, and on `Allow` runs the host's resolver once,
 `FnOnce(&Query) -> Result<T, QueryError>`, answering what it answers. The one thing it reads of that answer is a
 `PredicateNotHonoured` refusal, held to the declaration's own filter (D18.7). `T` is the host's type: the crate holds no
-result page (`QueryResult`), no `Deferred` envelope, no `ResolveFault`, and no captured or replayed dispatch (D14.3,
-D14.5, D14.6), so there are no rows for the dispatch to hold and no journal a refusal could be written to. The
-reference's record says the same of this crate (D268.13).
+result page (`QueryResult`), no typed `Deferred` value, no `ResolveFault`, and no captured or replayed dispatch (D14.3,
+D14.5, D14.6), so there are no rows for the dispatch to hold and no journal a refusal could be written to. The seam
+module does declare the `Deferred` document's shape, `seam::DEFERRED` (`pending`; `ready` with a `value`; `failed` with
+a `message`), which `seam::READERS` names `deferred` for the `seamRefusals` vectors that read it; that is a document
+shape only: the crate has no typed `Deferred` value, its query codec reads and writes none (D14.3), and no dispatch
+answers one. The reference's record says the same of the crate's query dispatch (D268.13).
 
 **D20.3 — the settle verb has no twin, because nothing in the crate leaves a capture open.**
 `QueryRegistry.settleCaptured` settles a capture a captured dispatch left open when its resolver answered `Pending`. It
