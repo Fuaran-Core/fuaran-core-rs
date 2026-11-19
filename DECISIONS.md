@@ -1572,3 +1572,52 @@ publish.
   family's count, so the reader sums by hand: the restatement D21.4 rules out.
 - **Changing `run.ps1` to pass `--nocapture` to each run.** The workflow's environment does it without changing the
   gate the repository's entry point runs.
+
+## D22 — 2026-11-19 — the query declaration leg writes its count line once, through the shared helper; the reference's records of this crate move by its D272, not at each pin move
+
+Phase 703. D21.1 put every leg's count line through one write in `tests/common`, so that a test running beside it
+cannot split the line in an uncaptured log. The query declaration leg kept its own line (D17), printed with one
+`eprintln!` over its values.
+
+**D22.1 — why that line could split.** The standard error stream is unbuffered, so a formatted print over values is
+one write per piece of the format: the literal pieces, each number, and every bracket, separator and quoted string of
+the two `Debug` arrays. The stream's lock keeps another `eprint!` of the same process out of the gaps, but not the
+harness's own result lines, which go to standard output; a log holding both streams, as an uncaptured CI log does,
+can carry the line in pieces. Measured with a probe (a writer counting the writes `write_fmt` makes, and a thread
+printing `test <name> ... ok` lines to standard output while the line is written 2,000 times, both streams into one
+file): the leg's shape makes 39 writes and the helper's makes 1, at rustc 1.97.0 and 1.85.0; the leg's shape left
+239 (1.97.0) and 266 (1.85.0) of 2,000 lines whole, the helper's 2,000 of 2,000 at both. In the binary itself the
+split was not seen (100 uncaptured runs at eight threads, and CI): its two short tests report before the long one
+prints, so the hazard was timing, not a red.
+
+**D22.2 — the line goes through the helper.** `answered_by_case` in `tests/common`, beside `answered` and
+`answered_across`, sums the case counts and hands `judge` the case parenthesis, so the line is built as one string
+and written once with its newline, then judged against the family's manifest row (D21.1). Its text at green is the
+text D17 printed:
+
+    queryDeclarationLaws: 107 of 107 vectors (["declarationRefused", "admissionFault", "register", "validateParams", "dispatch"] = [46, 34, 4, 14, 9])
+
+The leg's own comparison of its total with the manifest row is gone: `judge` makes it.
+
+**D22.3 — no red-first test.** A write's atomicity is not observable from inside a test: the harness owns the
+streams, a test cannot count the writes a print makes on the real standard error, and a split depends on scheduling,
+so a test that looked for one would pass or fail by chance. The guard is the helper: `judge`'s one `eprint!` is the
+only place a leg writes a count line, and every leg reaches it through `answered`, `answered_across` or
+`answered_by_case`.
+
+**D22.4 — the reference's records of this crate.** Eleven of the reference's 23 records of this crate name a kit
+older than the pin (`0.41.0` or `0.43.0`), with the counts the legs print at `0.44.0`. They are not stale and do not
+move: by the reference's D272, a record moves at first adoption, when the family's vectors change and the crate
+measures them, or when what a leg answers changes, and never when the pin moves over unchanged vectors or a leg
+changes how it reports (D21, this entry). A `kitVersion` older than the pin reads that the family has not changed
+since; the current count is the leg's line in this crate's CI log. D21.4 still says where a restamp reads its counts
+when one is due.
+
+**D22.5 — the version does not move.** Tests and records change; no public item does. By D11.8's rule
+`0.0.7-alpha.1` stays, and `Cargo.toml` does not move. No crate release, tag or publish.
+
+*Rejected:*
+- **A test that runs the binary and looks for a split.** It would be red or green by scheduling, never for the
+  stated reason.
+- **Keeping the leg's own `eprintln!` and building the string there.** It would fix the write and leave a second
+  place a count line is written, which D21.1 removed from every other leg.
