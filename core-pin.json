@@ -1,7 +1,7 @@
 {
   "kind": "core-pin",
   "repository": "Fuaran-Core/fuaran-core",
-  "sha": "66ff009ee306b20206d4427a874084e38721f3d0",
+  "sha": "6973c334731c5506fe3f844a2f62514fe11ebb61",
   "version": "0.44.0",
-  "reason": "Phase 693: the admission gate reads a declaration's embedded table (Core Phase 688, the reference's D266): an embedded table Table.validate refuses is refused IllFormedSource at source, before the parameters, a Ref is not read, and an admitted declaration reads back equal up to the column codec's normal form; queryDeclarationLaws grows from 97 vectors to 107 and seamRefusals from 142 to 143. Core 0.44.0 is a DRAFT at this commit and is not released: the commit is on Core's main inside the open 0.44.0 slot, and no tag names it. The vectors of every other family the port certified at the previous pin are byte for byte what they were. Previous pin 889c869d (Phase 690, Core 0.44.0, a draft). CI checks Core out at this commit; moving it is a deliberate act in the change that needs it, with the legs re-run against the new commit."
+  "reason": "Phase 697: Core 0.44.0 is RELEASED, and this is the commit its tag v0.44.0 names. The previous pin, 66ff009e (Phase 693), was a commit of the 0.44.0 draft. Between the two no vector file under conformance/ moved: only the family manifests' adoption records, restamped at Core's record of this port's commit f70a2a2, with every family's vector count as it was, so every leg reads the vectors it read at 66ff009e (queryDeclarationLaws 107, seamRefusals 143 among them). Of what the release carries beyond 66ff009e, the dispatch's rows clause (the reference's D267) and the query seam's settle verb (its D268) have no twin in the crate: DECISIONS.md D20. CI checks Core out at this commit; moving it is a deliberate act in the change that needs it, with the legs re-run against the new commit."
 }
