@@ -1239,6 +1239,7 @@ the port's own, as D17.10 says: every sentence, and the codes and values no vect
 `try_find` and `enumerate`), moved (the writer, the reader and the identity, from `Query` to `AdmittedQuery`) and
 removed from the public surface (`ColumnPredicate::to_json`). By D11.8's rule the API broke, so `0.0.5-alpha.1` becomes
 `0.0.6-alpha.1`. No crate release, tag or publish. The pin moves again to Core's `0.44.0` tag when Core releases it.
+*Settled by D20 (2026-11-19): Core released `0.44.0`, and the pin is the commit its tag `v0.44.0` names.*
 
 **D18.10 — built red first, as recorded.** Each change was preceded by a commit, alone, whose test failed to build or
 failed, and each such run is in CI at `rustc 1.85.0 (4d91de4e4 2025-02-17)` and `rustc 1.100.0 (0ef1bc386
@@ -1386,10 +1387,14 @@ on `QueryError` no longer compiles, and `admit` and `register` refuse declaratio
 broke: `0.0.6-alpha.1` becomes `0.0.7-alpha.1`, outside every requirement on `0.0.6-*`. Riding `0.0.6-alpha.1` lost: no
 version of the crate is released, but every break so far has moved it (D18.9), and a host depending on a commit of
 `0.0.6-alpha.1` would read the new case as compatible. No crate release, tag or publish. The pin moves again to Core's
-`0.44.0` tag when Core releases it.
+`0.44.0` tag when Core releases it. *Settled by D20 (2026-11-19): Core released `0.44.0`, and the pin is the commit its
+tag `v0.44.0` names.*
 
 **D19.8 — out of scope.** Holding a resolver's rows to `Table::validate` at the dispatch, and the result's writers, are
-Core's Phase 692 (D266.9 point 3), not landed at this pin; the crate's `dispatch` and its result handling do not move.
+Core's Phase 692 (D266.9 point 3), which is not at this pin; the crate's `dispatch` and its result handling do not move
+here. *Amended by D20 (2026-11-19): Core released Phase 692 in `0.44.0` (the reference's D267), with Phase 695's settle
+verb (D268); the crate carries a twin of neither, and D20.2 to D20.5 say why, what a host does instead, and what would
+bring them in.*
 
 **D19.9 — built red first, as recorded.** Each change was preceded by a commit, alone and touching tests only, whose
 test failed to build or failed, each in CI at `rustc 1.85.0 (4d91de4e4 2025-02-17)` and `rustc 1.100.0 (0ef1bc386
@@ -1407,3 +1412,97 @@ it reaches the leg), locally `8 of 107 vectors answered differently`, the eight 
 leg's count line only where it runs the leg with `--nocapture` (the declaration leg, in its build without `std`); the
 seams leg's line, `seamRefusals: 143 of 143 vectors`, is read locally, and in CI the leg passes its assertion against
 the manifest's 143.
+
+## D20 — 2026-11-19 — the port follows Core 0.44.0 as released: the dispatch's rows clause and the query seam's settle verb have no twin in the crate, and a host validates its rows before it answers them
+
+Phase 697 moves `core-pin.json` from `66ff009e`, a commit of the `0.44.0` draft (D19.1), to
+`6973c334731c5506fe3f844a2f62514fe11ebb61`, the commit Core's tag `v0.44.0` names: `0.44.0` is released. It is D13's
+act for `0.43.0`. Between the two commits Core added two things to its query seam: the dispatch holds a resolver's rows
+to `Table.validate` (its Phase 692, the reference's D267), and the seam settles a pending query capture through a verb
+of its own, `QueryRegistry.settleCaptured` (its Phase 695, D268). Neither has a twin here. This entry records why, what
+a host of the crate does instead, and what would bring them in.
+
+**D20.1 — the pin, and what it measured.** Measured first, with the pin moved alone (`1b33efe`). Between the two
+commits four files under `conformance/` differ, the manifests of `diff/`, `laws/`, `merge/` and `refusals/`, and in
+each only family rows' adoption records moved (Core's record of this crate at `f70a2a2`); no vector file and no row's
+vector count moved, and both commits are inside the `0.44.0` slot, so not even the kit's stamp moves. In CI, run
+44508563910 (on `1b33efe`) beside run 44351954216 (on `f70a2a2`, at `66ff009e`), both at `rustc 1.85.0 (4d91de4e4
+2025-02-17)` and `rustc 1.100.0 (0ef1bc386 2026-11-09)`: every test binary's result line, every row of the allocation
+table and the declaration leg's `queryDeclarationLaws: 107 of 107 vectors` (46, 34, 4, 14, 9) read the same at both
+pins. Locally, at `rustc 1.85.0` and `rustc 1.97.0 (2d8144b78 2026-07-07)`, with every leg's output shown, hosted and
+the capability and query legs without `std`: every binary passes the same tests at both pins, the declaration leg
+prints 107 of 107 (46, 34, 4, 14, 9) and the seams leg `seamRefusals: 143 of 143 vectors`. Nothing went red, so
+nothing in the crate changed.
+
+**D20.2 — the rows clause has no twin, because the crate's dispatch hands back the host's own answer.** In the
+reference, `Query.invoke` and `Query.invokePageWithArgs`, which every dispatch verb runs as its body, settle a
+resolver's `Deferred<QueryResult>` answer through one private function: a `Ready` result whose rows `Table.validate`
+refuses is `ExecutionFailed ("the resolver answered rows the column layer refuses: " + the column layer's reason, [])`,
+and the captured verbs journal that refusal, never a completion (D267.4, D267.5). The crate's `QueryRegistry::dispatch`
+(D14.6) resolves the id, validates the arguments, decides, and on `Allow` runs the host's resolver once,
+`FnOnce(&Query) -> Result<T, QueryError>`, answering what it answers. The one thing it reads of that answer is a
+`PredicateNotHonoured` refusal, held to the declaration's own filter (D18.7). `T` is the host's type: the crate holds no
+result page (`QueryResult`), no `Deferred` envelope, no `ResolveFault`, and no captured or replayed dispatch (D14.3,
+D14.5, D14.6), so there are no rows for the dispatch to hold and no journal a refusal could be written to. The
+reference's record says the same of this crate (D268.13).
+
+**D20.3 — the settle verb has no twin, because nothing in the crate leaves a capture open.**
+`QueryRegistry.settleCaptured` settles a capture a captured dispatch left open when its resolver answered `Pending`. It
+takes the admitted declaration, the arguments, the page token, the ticket and an answer that is a result or a
+`ResolveFault`, never pending; it refuses `NotAttempted`, the journal unmoved, a ticket whose key is not the
+invocation's, arguments the declaration does not take, and a deterministic declaration; and it puts the answer through
+`Query.invokePageWithArgs`, so rows the validation refuses are journalled as the refusal a dispatch answers (D268.4 to
+D268.8). The crate has no captured dispatch, no capture key (`invocationKey` and `invocationKeyPage` are not ported,
+D14.5), no ticket and no journal of reads, so there is nothing for such a verb to settle.
+
+**D20.4 — what a host does today.** A host whose resolver answers rows validates them with `Table::validate` before it
+answers them, and answers a refusal for rows it refuses: the guarantee the reference's clause gives its callers, that
+an answered page carries rows the column layer accepts, is the host's to hold. `Table::validate` refuses, first fault
+first: a schema name or a column name twice, a schema name with no column or a column absent from the schema
+(`ColumnError::Malformed`); a column whose type is not its schema entry's (`TypeMismatch`); ragged columns
+(`RaggedColumns`); a column whose validity mask is not as long as its values (`LengthMismatch`); and a cell the codec
+cannot carry, among them a non-finite float, a date or a timestamp out of range, and a decimal not in canonical text.
+`ColumnError::message` is the column layer's sentence, which the reference's refusal names (D19.1 compared, byte for
+byte, the eight sentences the reference's vectors carry for an embedded table). A host that answers as the reference
+does answers `QueryError::ExecutionFailed` with the detail `the resolver answered rows the column layer refuses: `
+followed by that sentence, and no `recoverable` arguments (D267.5). Nothing in the crate checks that it does.
+
+**D20.5 — what would bring them in.** By the crate's rule a typed value or a verb is not offered until a vector family
+certifies it or a consumer needs it (D8; D13.5 applied it to the query declaration). So two things would, each a phase
+of its own:
+
+- **A host of the crate that journals query answers and replays them.** It needs a result page, a captured dispatch
+  keyed by the invocation (the capture keys D14.5 left out) and a replay. Then the rows clause comes first: the live
+  dispatch puts a resolver's rows through `Table::validate` and refuses `ExecutionFailed` with the column layer's
+  reason. Then, wherever the captured dispatch leaves a capture open, the settle verb, with the five behaviours D268.13
+  lists, tested as D268.7 tests it: the journal a pending capture ends with is the journal of the same answer given at
+  once.
+- **A vector family from the reference for a captured dispatch.** Core emits none: no vector family moved for either
+  change (D267.10, D268.12), and D268.13 places such a law in Core's conformance library and its `conformance/`. When
+  one is emitted, `tests/families.rs` names it, and it is answered or declined then.
+
+**D20.6 — the alternatives that lost.**
+
+- **A rows clause on the crate's `dispatch` now**, for an answer that exposes a `Table` (a bound on `T`, or a second
+  verb answering a table). The reference's clause is on its result page, whose rows (a `Table`) are one member beside
+  its page number, its total and its page token; a verb answering a bare table would be a result type of the crate's own, with no twin and no vector, the
+  partial answer under the reference's name that D11.6 and D13.5 refused. And the generic `T` is what lets a host answer
+  in its own type.
+- **Porting the result page, the `Deferred` envelope, the capture, the replay and the settle verb now.** A public
+  surface no vector certifies and no host of the crate uses: the case D8's rule exists for.
+- **Leaving D19.8 as written.** It would read as waiting for Core's Phase 692, which is released, and which the crate
+  decides here not to follow until one of D20.5's triggers.
+
+**D20.7 — the record.** D19.8 is amended in place, so it no longer reads as pending. The last sentences of D18.9 and
+D19.7, that the pin moves to Core's `0.44.0` tag when Core releases it, are settled: the pin is that tag's commit
+(D20.1), as D13 settled the `0.43.0` draft's pin.
+
+**D20.8 — the version does not move.** No public item is added, removed or changed: the change is the pin, this record,
+the changelog and the README. By D11.8's rule `0.0.7-alpha.1` stays, and `Cargo.toml` does not move; `Cargo.lock` is
+not tracked (`.gitignore`). No crate release, tag or publish.
+
+**D20.9 — certified.** At Core `6973c334` (`0.44.0`, released), hosted and without `std`, at exactly 1.85.0 and at
+stable: every family the crate answered at `66ff009e`, with the counts it read there (`queryDeclarationLaws` 107,
+`seamRefusals` 143, `queryGrantLaws` 19, `capabilityLaws` 144, `capabilityDocumentLaws` 18 and `capabilityGateLaws` 41
+among them), and every row of the allocation table as it was. `tests/families.rs` names the same two families as
+before, `encodingProfile` and `identity`.
