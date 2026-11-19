@@ -291,5 +291,5 @@ fn profile_refusal_vectors() {
         }
         ran += 1;
     }
-    assert_eq!(ran, 19, "every profile vector runs");
+    assert_eq!(ran, CODEC_REFUSALS_PROFILE, "every profile vector runs");
 }

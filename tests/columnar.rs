@@ -61,7 +61,7 @@ fn codec_refusals_column() {
         assert_eq!(decode_outcome(s(v, "input"), true), expected, "{name}");
         ran += 1;
     }
-    assert_eq!(ran, 26, "the column vectors run");
+    assert_eq!(ran, CODEC_REFUSALS_COLUMN, "the column vectors run");
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn decimal_codec_and_aggregates() {
         }
     }
     assert_eq!((decoded, encoded, aggregated), (10, 2, 10));
-    assert_eq!(decoded + encoded + aggregated, 22);
+    assert_eq!(decoded + encoded + aggregated, DECIMAL_COLUMN);
 }
 
 #[test]

@@ -118,6 +118,34 @@ pub fn answered(dir: &str, family: &str, answered: usize) {
     );
 }
 
+/// The line for a family answered by more than one binary, printed once, by the
+/// binary that reads its manifest row: the number answered is the sum of every
+/// binary's share, each named. A share answered elsewhere is one of the
+/// constants below, which the answering binary asserts it ran, so the sum holds
+/// exactly when every binary is green.
+pub fn answered_across(dir: &str, family: &str, shares: &[(&str, usize)]) {
+    let total: usize = shares.iter().map(|(_, k)| k).sum();
+    let parts: Vec<String> = shares.iter().map(|(leg, k)| format!("{leg} {k}")).collect();
+    let stated = declared(dir, family);
+    eprintln!(
+        "{family}: {total} of {stated} vectors ({})",
+        parts.join(", ")
+    );
+    assert_eq!(
+        total,
+        stated,
+        "{dir}/{family}: the legs answered {total} vectors ({}) where the manifest states {stated}",
+        parts.join(", ")
+    );
+}
+
+/// `codecRefusals`' column vectors, answered by tests/columnar.rs.
+pub const CODEC_REFUSALS_COLUMN: usize = 26;
+/// `codecRefusals`' profile vectors, answered by tests/propagation_forms.rs.
+pub const CODEC_REFUSALS_PROFILE: usize = 19;
+/// `decimal`'s column codec and aggregate vectors, answered by tests/columnar.rs.
+pub const DECIMAL_COLUMN: usize = 22;
+
 /// A refusal's path as the vectors write it: a member by its name, an item by
 /// its index.
 pub fn path_json(e: &DecodeError) -> Vec<JVal> {

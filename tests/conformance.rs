@@ -83,9 +83,17 @@ fn codec_refusals_json_vectors() {
         }
         ran += 1;
     }
-    // The column vectors run in tests/columnar.rs (26) and the profile vectors in
-    // tests/propagation_forms.rs (19): the three legs are the family's 101.
-    answered("refusals", "codecRefusals", ran);
+    // The column vectors run in tests/columnar.rs and the profile vectors in
+    // tests/propagation_forms.rs: the three legs are the family's 101.
+    answered_across(
+        "refusals",
+        "codecRefusals",
+        &[
+            ("conformance", ran),
+            ("columnar", CODEC_REFUSALS_COLUMN),
+            ("propagation_forms", CODEC_REFUSALS_PROFILE),
+        ],
+    );
     assert_eq!(ran, 56, "the json vectors run");
 }
 
@@ -236,7 +244,7 @@ fn decimal_law_vectors() {
             }
             "add" => decimal::add(s(input, "a"), s(input, "b")),
             "toFloat" => decimal::try_to_float(s(input, "text")).map(format_finite_double),
-            // The column codec and the aggregates run in tests/columnar.rs (22):
+            // The column codec and the aggregates run in tests/columnar.rs:
             // the two legs are the family's 75.
             _ => continue,
         };
@@ -252,7 +260,11 @@ fn decimal_law_vectors() {
         ran += 1;
     }
     assert_eq!(vectors(&doc).len(), declared("laws", "decimal"));
-    answered("laws", "decimal", ran);
+    answered_across(
+        "laws",
+        "decimal",
+        &[("conformance", ran), ("columnar", DECIMAL_COLUMN)],
+    );
     assert_eq!(
         ran, 53,
         "the canonical, compare, add and toFloat vectors run"
