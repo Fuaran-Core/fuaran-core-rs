@@ -3,6 +3,25 @@
 Every change to the crate's public API, newest first. Each entry names the Core commit the crate certifies against
 (`core-pin.json`), and whether that Core version is released.
 
+## 0.0.7-alpha.1, unchanged — 2026-11-19 — at Core `6973c334` (`0.44.0`, released)
+
+Follows Core `6973c334731c5506fe3f844a2f62514fe11ebb61`, version `0.44.0`, **released**: the commit Core's tag
+`v0.44.0` names. Previous pin `66ff009e` (`0.44.0`, a draft). No change to the public API or to any answer; the version
+stays `0.0.7-alpha.1` (D11.8: no public item changed). DECISIONS.md D20.
+
+**What the crate does not carry of `0.44.0`:** the reference's dispatch holds a resolver's rows to `Table.validate`,
+refusing rows it refuses as `ExecutionFailed` in the column layer's words (Core's Phase 692, its D267), and its query
+seam settles a pending capture through a verb of its own, `QueryRegistry.settleCaptured` (Core's Phase 695, its D268).
+Neither has a twin here: the crate's `QueryRegistry::dispatch` hands back the host's own answer, and the crate holds no
+result page, `Deferred` envelope, capture or replay. A host whose resolver answers rows validates them with
+`Table::validate` before it answers them. A host of the crate that journals query answers and replays them, or a
+vector family from the reference for a captured dispatch, would bring both in (D20.5).
+
+**Certified:** every family the crate answered at the previous pin, with the same counts, at exactly 1.85.0 and at
+stable: no vector file moved between the two commits, only the manifests' adoption records. `queryDeclarationLaws` 107
+of 107 (`declarationRefused` 46, `admissionFault` 34, `register` 4, `validateParams` 14, `dispatch` 9), `seamRefusals`
+143 of 143, `queryGrantLaws` 19, `capabilityLaws` 144, `capabilityDocumentLaws` 18, `capabilityGateLaws` 41.
+
 ## 0.0.7-alpha.1 — 2026-11-18 — breaking — the admission gate reads a declaration's embedded table, at Core `66ff009e` (draft)
 
 Follows Core `66ff009ee306b20206d4427a874084e38721f3d0`, version `0.44.0`, a **draft**, not released (a commit on Core's
